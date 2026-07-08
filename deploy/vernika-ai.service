@@ -1,0 +1,29 @@
+[Unit]
+Description=Vernika AI Multi-Agent Factory
+After=network.target
+
+[Service]
+Type=simple
+User=vernika
+Group=vernika
+WorkingDirectory=/opt/vernika-ai
+EnvironmentFile=/opt/vernika-ai/.env
+ExecStart=/opt/vernika-ai/venv/bin/gunicorn backend.main:app \
+    --bind 0.0.0.0:8000 \
+    --workers 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --timeout 120 \
+    --access-logfile /var/log/vernika-ai/access.log \
+    --error-logfile /var/log/vernika-ai/error.log \
+    --log-level info
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vernika-ai/backend/data
+
+[Install]
+WantedBy=multi-user.target

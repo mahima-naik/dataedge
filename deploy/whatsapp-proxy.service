@@ -1,0 +1,21 @@
+[Unit]
+Description=Vernika WhatsApp Web proxy (whatsapp-web.js sidecar)
+After=network.target vernika.service
+Wants=vernika.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/vernika/whatsapp-proxy
+Environment=NODE_ENV=production
+Environment=PORT=3001
+Environment=FASTAPI_WEBHOOK_URL=http://127.0.0.1:8000/api/whatsapp/proxy/message
+EnvironmentFile=-/root/vernika/backend/.env
+ExecStart=/usr/bin/node /root/vernika/whatsapp-proxy/index.js
+Restart=always
+RestartSec=8
+StandardOutput=append:/root/vernika/agent/whatsapp-proxy.log
+StandardError=append:/root/vernika/agent/whatsapp-proxy.log
+
+[Install]
+WantedBy=multi-user.target

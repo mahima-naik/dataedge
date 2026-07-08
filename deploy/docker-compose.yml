@@ -1,0 +1,47 @@
+# Vernika AI bridge — share on any Docker host / cloud VM / laptop.
+# Usage:
+#   cp .env.example .env   # fill GEMINI_API_KEY, VOBIZ_*, etc.
+#   docker compose up --build
+#
+# Host port: use EXPORT_PORT=9000 docker compose up to map host:9000 → container:8000.
+
+services:
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vernika-bridge:latest
+    container_name: vernika-bridge
+    restart: unless-stopped
+    ports:
+      - "${EXPORT_PORT:-8000}:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      WHATSAPP_PROXY_ENABLED: "${WHATSAPP_PROXY_ENABLED:-0}"
+      WHATSAPP_PROXY_URL: "http://whatsapp-proxy:3001"
+      WHATSAPP_PROXY_SECRET: "${WHATSAPP_PROXY_SECRET:-}"
+    env_file:
+      - .env
+    volumes:
+      - vernika_data:/app/backend/data
+
+  whatsapp-proxy:
+    build:
+      context: ./whatsapp-proxy
+      dockerfile: Dockerfile
+    container_name: vernika-whatsapp-proxy
+    restart: unless-stopped
+    ports:
+      - "${WHATSAPP_PROXY_PORT:-3001}:3001"
+    environment:
+      PORT: "3001"
+      FASTAPI_WEBHOOK_URL: "http://bridge:8000/api/whatsapp/proxy/message"
+      WHATSAPP_PROXY_SECRET: "${WHATSAPP_PROXY_SECRET:-}"
+      WHATSAPP_SESSION_PATH: "/app/whatsapp-session"
+    volumes:
+      - whatsapp_session:/app/whatsapp-session
+
+volumes:
+  vernika_data:
+  whatsapp_session:

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <title>Vernika Pro | Sandbox Agents</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<div id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
+<div class="app-layout" id="app-shell">
+    <aside class="sidebar" id="app-sidebar" aria-label="Sandbox navigation">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">V</div>
+            <div>
+                <div class="sidebar-title">Vernika Pro</div>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-label">Sandbox</div>
+                <div class="nav-item active" onclick="showPageNav('overview', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>Overview</span>
+                </div>
+                <div class="nav-item" onclick="showPageNav('agents', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                    <span>My Agents</span>
+                </div>
+                <div class="nav-item" onclick="showPageNav('call', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>
+                    <span>Test Call</span>
+                </div>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="theme-section">
+                <span class="text-small">Theme</span>
+                <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>
+            </div>
+
+            <div class="vp-sidebar-note">
+                <p class="vp-sidebar-note-title">Vernika Sandbox</p>
+                <p class="vp-sidebar-note-caption">Custom prompts &amp; dial-out</p>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <header class="mobile-toolbar">
+            <button type="button" class="mobile-menu-btn" id="menu-toggle" onclick="toggleMobileSidebar(event)" aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <span class="mobile-toolbar-title">Vernika Pro · Sandbox</span>
+        </header>
+
+        <div id="page-overview" class="page-section active">
+            <div class="vp-banner vp-banner--center">
+                <p>Build custom Gemini Live agents with their own prompts, greeting, optional RAG text, voice, and per-agent Vobiz credentials (fallback to global env).</p>
+            </div>
+
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Vernika Sandbox</h1>
+                <p class="vp-page-sub">Create agents and place outbound PSTN test calls via the same bridge stack as campaigns</p>
+            </div>
+
+            <div class="grid grid-2 gap-xl mb-3xl">
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">How it works</h3>
+                            <p class="card-subtitle">Backend flow</p>
+                        </div>
+                    </div>
+                    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-lg);">
+                        <li class="text-small text-muted" style="margin: 0;">Each agent gets a persisted UUID <code>sandbox-{id}</code> campaign key for the live websocket leg.</li>
+                        <li class="text-small text-muted" style="margin: 0;"><code>_role=demo</code> routes persona anchors while your custom prompt carries the behavioural spec.</li>
+                        <li class="text-small text-muted" style="margin: 0;"><code class="vp-sidebar-note-caption">VOBIZ_PUBLIC_BASE_URL</code> must expose <code>/vobiz/answer</code> to Vobiz.</li>
+                        <li class="text-small text-muted" style="margin: 0;">Optional per-agent caller ID / auth overrides fall back to <code class="vp-sidebar-note-caption">VOBIZ_*</code> globals.</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <div>
+                            <h3 class="card-title">Docs</h3>
+                            <p class="card-subtitle">API</p>
+                        </div>
+                    </div>
+                    <p class="text-small text-muted" style="margin: 0;">
+                        REST: <code>GET</code>/<code>POST</code> <code>/api/sandbox/agents</code>, <code>PATCH</code>/<code>DELETE</code>
+                        <code>/api/sandbox/agents/{id}</code>, dial <code>POST /api/sandbox/agents/{id}/dial</code> body <code>{"to":"+91…"}</code>.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="page-agents" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">My Agents</h1>
+                <p class="vp-page-sub">Create agents and refresh the list below</p>
+            </div>
+
+            <div class="card mb-3xl">
+                <div class="card-header">
+                    <div>
+                        <h3 class="card-title" id="form-title">New agent</h3>
+                        <p class="card-subtitle text-muted mb-0" id="form-subtitle">Adds a sandbox row stored in SQLite</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="clear-form-btn" onclick="clearAgentForm()" style="display:none;">Discard edit</button>
+                </div>
+
+                <form id="agent-form" onsubmit="submitAgentForm(event)">
+                    <input type="hidden" id="edit-agent-id" value="">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="f-name" placeholder="Friendly label" maxlength="512">
+                    </div>
+                    <div class="form-group">
+                        <label>Prompt <span class="text-muted text-small">(system instruction)</span></label>
+                        <textarea id="f-prompt" rows="5" placeholder="Who the agent is, goals, boundaries…"></textarea>
+                    </div>
+                    <div class="grid grid-2 gap-lg">
+                        <div class="form-group">
+                            <label>Greeting (optional)</label>
+                            <textarea id="f-greeting" rows="2" placeholder="First spoken line; blank uses role/default opener logic"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Voice (optional)</label>
+                            <input type="text" id="f-voice" placeholder="e.g. Gemini Live voice name">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>RAG text (optional)</label>
+                        <textarea id="f-rag" rows="4" placeholder="Sandbox-only knowledge for live keyword RAG"></textarea>
+                    </div>
+                    <div class="grid grid-3 gap-lg">
+                        <div class="form-group">
+                            <label>Vobiz from number</label>
+                            <input type="text" id="f-v-from" placeholder="Global fallback if empty">
+                        </div>
+                        <div class="form-group">
+                            <label>Vobiz auth ID</label>
+                            <input type="text" id="f-v-auth-id" autocomplete="off" placeholder="Global fallback">
+                        </div>
+                        <div class="form-group">
+                            <label>Vobiz auth token</label>
+                            <input type="password" id="f-v-token" autocomplete="new-password" placeholder="Global fallback">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-lg" type="submit" id="form-submit-btn">Save agent</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3 class="card-title">Saved agents</h3>
+                        <p class="card-subtitle">Click edit to reuse the form above</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="loadAgents()">Refresh</button>
+                </div>
+                <div id="agents-status" class="text-small text-muted mb-lg">&nbsp;</div>
+                <div id="agents-list"></div>
+            </div>
+        </div>
+
+        <div id="page-call" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Test call</h1>
+                <p class="vp-page-sub">Outbound dial selects Vobiz credentials per agent — then global defaults</p>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Place call</h3>
+                </div>
+                <div class="form-group">
+                    <label>Agent</label>
+                    <select id="call-agent-select">
+                        <option value="">Loading…</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Destination</label>
+                    <input type="tel" id="call-to" placeholder="+91xxxxxxxxxx">
+                </div>
+                <div class="form-group">
+                    <label>Optional callee name</label>
+                    <input type="text" id="call-callee-name" placeholder="Used in opener context">
+                </div>
+                <button type="button" class="btn btn-primary btn-lg btn-block" onclick="submitDial()">Dial</button>
+                <pre id="dial-result" class="text-small mt-xl" style="white-space: pre-wrap; background: var(--bg-secondary); padding: var(--space-lg); border-radius: var(--radius-md); min-height: 3rem;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    if (localStorage.getItem('theme') === 'light') {
+        document.body.classList.add('light-mode');
+    }
+
+    function closeMobileSidebar() {
+        const shell = document.getElementById('app-shell');
+        const backdrop = document.getElementById('sidebar-backdrop');
+        const btn = document.getElementById('menu-toggle');
+        if (shell) shell.classList.remove('sidebar-open');
+        if (backdrop) backdrop.classList.remove('visible');
+        document.body.classList.remove('nav-drawer-open');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleMobileSidebar(ev) {
+        if (ev) ev.stopPropagation();
+        const shell = document.getElementById('app-shell');
+        if (!shell) return;
+        const open = !shell.classList.contains('sidebar-open');
+        shell.classList.toggle('sidebar-open', open);
+        const backdrop = document.getElementById('sidebar-backdrop');
+        const btn = document.getElementById('menu-toggle');
+        if (backdrop) backdrop.classList.toggle('visible', open);
+        document.body.classList.toggle('nav-drawer-open', open);
+        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function showPageNav(pageId, navEl) {
+        showPage(pageId, navEl);
+        closeMobileSidebar();
+    }
+
+    function showPage(pageId, navEl) {
+        document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+        const page = document.getElementById('page-' + pageId);
+        if (page) page.classList.add('active');
+        document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+        if (navEl) navEl.classList.add('active');
+    }
+
+    function toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+    }
+
+    /** @type {Record<string, any>|null} */
+    let sandboxAgentsSnapshot = {};
+
+    async function apiJson(path, opts = {}) {
+        const r = await fetch(path, {
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+            ...opts,
+        });
+        const text = await r.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (_) { data = { raw: text }; }
+        if (!r.ok) {
+            const err = new Error((data && (data.detail || data.message)) || r.statusText);
+            err.detail = data;
+            err.status = r.status;
+            throw err;
+        }
+        return data;
+    }
+
+    function setAgentsStatus(msg) {
+        const el = document.getElementById('agents-status');
+        if (el) el.textContent = msg;
+    }
+
+    function populateCallSelect(rows) {
+        const sel = document.getElementById('call-agent-select');
+        if (!sel) return;
+        sel.innerHTML = '';
+        if (!rows.length) {
+            const o = document.createElement('option');
+            o.value = '';
+            o.textContent = '(no agents — create one first)';
+            sel.appendChild(o);
+            return;
+        }
+        rows.forEach(row => {
+            const o = document.createElement('option');
+            o.value = row.id;
+            o.textContent = (row.name || 'Untitled') + ' · ' + row.id.slice(0, 8) + '…';
+            sel.appendChild(o);
+        });
+    }
+
+    function renderAgentsTable(rows) {
+        const wrap = document.getElementById('agents-list');
+        if (!wrap) return;
+        if (!rows.length) {
+            wrap.innerHTML = '<p class="text-muted text-small mb-0">No agents yet — use the form above.</p>';
+            return;
+        }
+        let html = '<div class="table-wrapper"><table><thead><tr><th>Name</th><th>ID</th><th>Voice</th><th></th></tr></thead><tbody>';
+        rows.forEach(row => {
+            const safeId = escapeHtml(row.id);
+            html += `<tr><td>${escapeHtml(row.name || '')}</td><td class="text-small"><code>${safeId}</code></td>`;
+            html += `<td>${escapeHtml(row.voice || '—')}</td>`;
+            html += `<td style="white-space: nowrap;">`;
+            html += `<button type="button" class="btn btn-secondary btn-sm" onclick="editAgent('${safeId}')">Edit</button>`;
+            html += ` <button type="button" class="btn btn-secondary btn-sm" onclick="deleteAgent('${safeId}')">Delete</button>`;
+            html += '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+        wrap.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+        return String(s ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    async function loadAgents() {
+        try {
+            setAgentsStatus('Loading…');
+            const data = await apiJson('/api/sandbox/agents');
+            const rows = data.agents || [];
+            sandboxAgentsSnapshot = {};
+            rows.forEach(r => { sandboxAgentsSnapshot[r.id] = r; });
+            renderAgentsTable(rows);
+            populateCallSelect(rows);
+            setAgentsStatus(rows.length ? rows.length + ' agent(s).' : 'No agents.');
+        } catch (e) {
+            console.error(e);
+            setAgentsStatus('Failed to load agents: ' + e.message);
+        }
+    }
+
+    function clearAgentForm() {
+        document.getElementById('edit-agent-id').value = '';
+        document.getElementById('f-name').value = '';
+        document.getElementById('f-prompt').value = '';
+        document.getElementById('f-greeting').value = '';
+        document.getElementById('f-voice').value = '';
+        document.getElementById('f-rag').value = '';
+        document.getElementById('f-v-from').value = '';
+        document.getElementById('f-v-auth-id').value = '';
+        document.getElementById('f-v-token').value = '';
+        document.getElementById('form-title').textContent = 'New agent';
+        document.getElementById('form-subtitle').textContent = 'Adds a sandbox row stored in SQLite';
+        document.getElementById('form-submit-btn').textContent = 'Save agent';
+        document.getElementById('clear-form-btn').style.display = 'none';
+    }
+
+    /** @param {string} agentIdOrJson */
+    function editAgent(agentIdOrJson) {
+        /** @type {any} */
+        let row = sandboxAgentsSnapshot[agentIdOrJson];
+        if (!row) {
+            alert('Agent not loaded — refresh.');
+            return;
+        }
+        document.getElementById('edit-agent-id').value = row.id;
+        document.getElementById('f-name').value = row.name || '';
+        document.getElementById('f-prompt').value = row.prompt || '';
+        document.getElementById('f-greeting').value = row.greeting_text || '';
+        document.getElementById('f-voice').value = row.voice || '';
+        document.getElementById('f-rag').value = row.rag || '';
+        document.getElementById('f-v-from').value = row.vobiz_from_number || '';
+        document.getElementById('f-v-auth-id').value = row.vobiz_auth_id || '';
+        document.getElementById('f-v-token').value = row.vobiz_auth_token || '';
+        document.getElementById('form-title').textContent = 'Edit agent';
+        document.getElementById('form-subtitle').textContent = row.id;
+        document.getElementById('form-submit-btn').textContent = 'Update agent';
+        document.getElementById('clear-form-btn').style.display = '';
+        showPageNav('agents', document.querySelectorAll('.nav-item')[1]);
+    }
+
+    async function deleteAgent(id) {
+        if (!confirm('Delete this sandbox agent permanently?')) return;
+        try {
+            await apiJson('/api/sandbox/agents/' + encodeURIComponent(id), { method: 'DELETE' });
+            await loadAgents();
+            const editing = document.getElementById('edit-agent-id').value;
+            if (editing === id) clearAgentForm();
+        } catch (e) {
+            alert('Delete failed: ' + e.message);
+        }
+    }
+
+    async function submitAgentForm(ev) {
+        ev.preventDefault();
+        const payload = {
+            name: document.getElementById('f-name').value.trim(),
+            prompt: document.getElementById('f-prompt').value,
+            greeting_text: document.getElementById('f-greeting').value,
+            voice: document.getElementById('f-voice').value.trim(),
+            rag: document.getElementById('f-rag').value,
+            vobiz_from_number: document.getElementById('f-v-from').value.trim(),
+            vobiz_auth_id: document.getElementById('f-v-auth-id').value.trim(),
+            vobiz_auth_token: document.getElementById('f-v-token').value.trim(),
+        };
+        const editId = document.getElementById('edit-agent-id').value.trim();
+        try {
+            if (editId) {
+                await apiJson('/api/sandbox/agents/' + encodeURIComponent(editId), {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload),
+                });
+            } else {
+                await apiJson('/api/sandbox/agents', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                });
+                clearAgentForm();
+            }
+            await loadAgents();
+            setAgentsStatus(editId ? 'Updated.' : 'Created.');
+            if (editId) alert('Saved.');
+        } catch (e) {
+            alert('Save failed: ' + JSON.stringify(e.detail || e.message));
+        }
+    }
+
+    async function submitDial() {
+        const sel = document.getElementById('call-agent-select');
+        const agentId = sel && sel.value;
+        const out = document.getElementById('dial-result');
+        if (!agentId) {
+            if (out) out.textContent = 'Pick an agent first.';
+            return;
+        }
+        const to = document.getElementById('call-to').value.trim();
+        const callee = document.getElementById('call-callee-name').value.trim();
+        if (!to) {
+            if (out) out.textContent = 'Enter destination number.';
+            return;
+        }
+        if (out) out.textContent = 'Dialing…';
+        try {
+            const body = { to };
+            if (callee) body.callee_name = callee;
+            const data = await apiJson('/api/sandbox/agents/' + encodeURIComponent(agentId) + '/dial', {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+            if (out) out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+            if (out) out.textContent = 'Error (' + e.status + '):\n' + JSON.stringify(e.detail || e.message, null, 2);
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMobileSidebar();
+    });
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 900) closeMobileSidebar();
+    });
+
+    loadAgents();
+</script>
+</body>
+</html>

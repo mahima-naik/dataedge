@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="description" content="Vernika Pro — voice AI demo. Explore realtime agents and telephony integrations.">
+    <title>Vernika Pro | Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body class="demo-surface">
+<a class="demo-skip" href="#demo-main">Skip to content</a>
+<div id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
+<div class="app-layout" id="app-shell">
+    <aside class="sidebar" id="app-sidebar" aria-label="Demo navigation">
+        <div class="sidebar-header">
+            <div class="sidebar-logo" aria-hidden="true">V</div>
+            <div>
+                <div class="sidebar-title">Vernika Pro</div>
+                <div class="text-small text-muted" style="margin-top:2px;font-weight:600;letter-spacing:0.02em;">Product tour</div>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Demo sections">
+            <div class="nav-section">
+                <div class="nav-label">Demo</div>
+                <div class="nav-item active" role="button" tabindex="0"
+                     onclick="showPageNav('dashboard', this)"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showPageNav('dashboard',this);}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                    <span>Overview</span>
+                </div>
+                <div class="nav-item" role="button" tabindex="0"
+                     onclick="showPageNav('test', this)"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showPageNav('test',this);}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v1a7 7 0 01-14 0v-1M12 19v4M8 23h8"/></svg>
+                    <span>Try Voice</span>
+                </div>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="theme-section">
+                <span class="text-small" style="font-weight:700;">Appearance</span>
+                <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light or dark theme"></button>
+            </div>
+
+            <div class="vp-sidebar-note">
+                <p class="vp-sidebar-note-title">Public sandbox</p>
+                <p class="vp-sidebar-note-caption">No sign-in • sample metrics</p>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-content" id="demo-main">
+        <header class="mobile-toolbar">
+            <button type="button" class="mobile-menu-btn" id="menu-toggle" onclick="toggleMobileSidebar(event)" aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <span class="mobile-toolbar-title">Vernika Pro · Demo</span>
+        </header>
+
+        <div id="page-dashboard" class="page-section active">
+            <div class="demo-hero" role="region" aria-labelledby="demo-hero-heading">
+                <div class="demo-hero__mesh" aria-hidden="true"></div>
+                <div class="demo-hero__inner">
+                    <p class="demo-eyebrow">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                        Live voice stack
+                    </p>
+                    <h1 class="demo-hero__title" id="demo-hero-heading">Pro-grade voice conversations</h1>
+                    <p class="demo-hero__lead">Low-latency Gemini Live speech, outbound PSTN hooks, and role-isolated personas — presented here as a frictionless demo.</p>
+                    <div class="demo-trust-row" aria-label="Highlights">
+                        <span class="demo-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>Natively bilingual-friendly</span>
+                        <span class="demo-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Indian English tuned</span>
+                        <span class="demo-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Sub-second feel</span>
+                    </div>
+                </div>
+            </div>
+
+            <section class="vp-stat-grid" aria-label="Sample metrics">
+                <article class="stat-card demo-stat demo-stat--agents">
+                    <div class="demo-stat__icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>
+                    <div class="stat-label">Active agents</div>
+                    <div class="stat-value">3</div>
+                    <p class="demo-stat__hint">Separate sellers, buyers &amp; RFQ specialists</p>
+                </article>
+                <article class="stat-card demo-stat demo-stat--calls">
+                    <div class="demo-stat__icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.962.362 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 14.91a16 16 0 006 6l2.29-2.29a2 2 0 012.11-.45c.907.337 1.848.573 2.81.7A2 2 0 0122 16.92z"/></svg></div>
+                    <div class="stat-label">Demo calls</div>
+                    <div class="stat-value">156</div>
+                    <p class="demo-stat__hint">Illustrative throughput for this sandbox</p>
+                </article>
+                <article class="stat-card demo-stat demo-stat--duration">
+                    <div class="demo-stat__icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+                    <div class="stat-label">Avg duration</div>
+                    <div class="stat-value">4.2m</div>
+                    <p class="demo-stat__hint">Typical engaged session length</p>
+                </article>
+                <article class="stat-card demo-stat demo-stat--success">
+                    <div class="demo-stat__icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div>
+                    <div class="stat-label">Completion</div>
+                    <div class="stat-value" style="color:var(--success);">94%</div>
+                    <p class="demo-stat__hint">Demo KPI — not tied to production data</p>
+                </article>
+            </section>
+
+            <div class="demo-split">
+                <div class="card" style="margin-bottom:0;">
+                    <div class="card-header" style="border-bottom:none;padding-bottom:var(--space-md);margin-bottom:var(--space-md);">
+                        <div>
+                            <h2 class="card-title" style="margin:0;">What you get</h2>
+                            <p class="card-subtitle" style="margin-top:8px;">Operator-grade controls under the hood</p>
+                        </div>
+                    </div>
+                    <ul class="demo-feature-list">
+                        <li class="demo-feature-item">
+                            <span class="demo-feature-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg></span>
+                            <div>
+                                <p class="demo-feature-title">Realtime voice agents</p>
+                                <p class="demo-feature-desc">Gemini-native audio with natural turn-taking, barge-in, and conversational pacing tuned for PSTN latency.</p>
+                            </div>
+                        </li>
+                        <li class="demo-feature-item">
+                            <span class="demo-feature-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg></span>
+                            <div>
+                                <p class="demo-feature-title">Telephony-ready</p>
+                                <p class="demo-feature-desc">Bridge layout built for outbound media streams via Vobiz-style answer URLs — the same pathway production uses.</p>
+                            </div>
+                        </li>
+                        <li class="demo-feature-item">
+                            <span class="demo-feature-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg></span>
+                            <div>
+                                <p class="demo-feature-title">Roles that stay isolated</p>
+                                <p class="demo-feature-desc">Separate prompts, KB slices, greetings, and call legs so Sellers never leak into Buyers or RFQs.</p>
+                            </div>
+                        </li>
+                        <li class="demo-feature-item">
+                            <span class="demo-feature-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg></span>
+                            <div>
+                                <p class="demo-feature-title">Knowledge-grounded replies</p>
+                                <p class="demo-feature-desc">Configurable RAG text per role keeps answers anchored to what you authorize — not hallucinated catalogs.</p>
+                            </div>
+                        </li>
+                        <li class="demo-feature-item">
+                            <span class="demo-feature-check" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg></span>
+                            <div>
+                                <p class="demo-feature-title">Campaign scale path</p>
+                                <p class="demo-feature-desc">CSV intake, pacing, transcripts, and operator dashboard patterns match how teams run weekday blitzes.</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="card" style="margin-bottom:0;">
+                    <div class="card-header" style="border-bottom:none;padding-bottom:var(--space-md);margin-bottom:var(--space-md);">
+                        <div>
+                            <h2 class="card-title" style="margin:0;">Personas</h2>
+                            <p class="card-subtitle" style="margin-top:8px;">Switch context without rewriting infrastructure</p>
+                        </div>
+                    </div>
+                    <div class="demo-role-grid">
+                        <div class="demo-role-tile demo-role-tile--sellers">
+                            <div>
+                                <p class="demo-role-name">Sellers</p>
+                                <p class="demo-role-desc">Outbound discovery tuned for concise discovery + next-step commitments.</p>
+                            </div>
+                            <span class="demo-role-tag">GMT</span>
+                        </div>
+                        <div class="demo-role-tile demo-role-tile--buyers">
+                            <div>
+                                <p class="demo-role-name">Buyers</p>
+                                <p class="demo-role-desc">Procurement-facing tone with consultative listening and recap.</p>
+                            </div>
+                            <span class="demo-role-tag">RFI</span>
+                        </div>
+                        <div class="demo-role-tile demo-role-tile--rfqs">
+                            <div>
+                                <p class="demo-role-name">RFQs</p>
+                                <p class="demo-role-desc">Spec clarity, timelines, and quote discipline on every follow-up.</p>
+                            </div>
+                            <span class="demo-role-tag">Desk</span>
+                        </div>
+                    </div>
+                    <p class="text-muted text-small" style="margin-top:var(--space-xl);line-height:1.5;">
+                        Roles map to discrete prompts &amp; knowledge in the operator console — this demo previews the UX language only.
+                    </p>
+                </div>
+            </div>
+
+            <section class="card demo-table-shell" aria-labelledby="recent-calls-heading" style="padding:0;">
+                <div class="card-header" style="margin:0;padding:var(--space-2xl) var(--space-2xl) var(--space-lg);border-bottom:1px solid var(--border);">
+                    <div>
+                        <h2 class="card-title" id="recent-calls-heading" style="margin:0;">Illustrative call log</h2>
+                        <p class="card-subtitle" style="margin-top:8px;margin-bottom:0;">Sample rows to show dashboard density</p>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Contact</th>
+                                <th>Role</th>
+                                <th>When</th>
+                                <th>Duration</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>John Smith</strong></td>
+                                <td><span class="badge badge-primary">Sellers</span></td>
+                                <td>Today, 14:14</td>
+                                <td>3:45</td>
+                                <td><span class="badge badge-success">Completed</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Sarah Johnson</strong></td>
+                                <td><span class="badge badge-success">Buyers</span></td>
+                                <td>Today, 13:32</td>
+                                <td>5:12</td>
+                                <td><span class="badge badge-success">Completed</span></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Mike Chen</strong></td>
+                                <td><span class="badge badge-warning">RFQs</span></td>
+                                <td>Today, 12:45</td>
+                                <td>2:33</td>
+                                <td><span class="badge badge-success">Completed</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <div id="page-test" class="page-section">
+            <header class="vp-page-header">
+                <h1 class="vp-page-title">Try the voice surface</h1>
+                <p class="vp-page-sub">Dry-run flow — wired to UX feedback while your bridge provisions telephony separately.</p>
+            </header>
+
+            <div class="demo-voice-layout">
+                <div class="card demo-voice-panel-main">
+                    <div class="card-header" style="margin-bottom:var(--space-xl);">
+                        <div>
+                            <h2 class="card-title" style="margin:0;">Call simulator</h2>
+                            <p class="card-subtitle" style="margin-top:8px;">Populate fields and simulate the initiation step</p>
+                        </div>
+                    </div>
+
+                    <div class="form-row" style="margin-bottom:0;">
+                        <div class="form-group" style="margin-bottom:var(--space-lg);">
+                            <label for="demo-role">Agent persona</label>
+                            <select id="demo-role" aria-describedby="hint-role">
+                                <option value="sellers">Sellers agent</option>
+                                <option value="buyers">Buyers agent</option>
+                                <option value="rfqs">RFQs agent</option>
+                            </select>
+                            <p id="hint-role" class="text-muted text-small" style="margin-top:8px;line-height:1.45;">Mirrors Live session routing keyed by operator role.</p>
+                        </div>
+                        <div class="form-group" style="margin-bottom:var(--space-lg);">
+                            <label for="demo-phone">Destination number</label>
+                            <input type="tel" id="demo-phone" inputmode="tel" autocomplete="tel" placeholder="+91 98765 43210"
+                                   aria-describedby="hint-phone">
+                            <p id="hint-phone" class="text-muted text-small" style="margin-top:8px;line-height:1.45;">E.164-style numbers reduce carrier ambiguity.</p>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="demo-name">Display name used in opener</label>
+                        <input type="text" id="demo-name" placeholder="Demo contact" value="Alex" autocomplete="name">
+                    </div>
+
+                    <button type="button" class="btn btn-primary btn-lg btn-block btn-shine" onclick="initializeDemoCall()">
+                        Simulate voice session
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"/></svg>
+                    </button>
+
+                    <div class="demo-callout" role="note">
+                        <p><strong>Product note:</strong> this button confirms the handshake UI; production attaches your Vobiz answer URL plus `/ws/vobiz` media leg.</p>
+                        <p>Nothing leaves this demo page without your gateway — we keep personal numbers out of transcripts here.</p>
+                    </div>
+                </div>
+
+                <aside class="demo-voice-aside card" aria-label="How simulation works">
+                    <h3 class="card-title" style="font-size:var(--text-lg);margin-bottom:var(--space-xs);">Before you dial for real</h3>
+                    <p class="text-muted text-small" style="line-height:1.55;margin-bottom:var(--space-lg);">Three beats operators expect from the console-equivalent workflow.</p>
+                    <ol class="demo-step-list">
+                        <li class="demo-step-item">
+                            <span class="demo-step-num">1</span>
+                            <span><strong>Frozen persona</strong> — prompt + greeting + KB all lock to your selected role tab.</span>
+                        </li>
+                        <li class="demo-step-item">
+                            <span class="demo-step-num">2</span>
+                            <span><strong>Routed audio</strong> — carrier hits answer XML → websocket bridge → Gemini Live session.</span>
+                        </li>
+                        <li class="demo-step-item">
+                            <span class="demo-step-num">3</span>
+                            <span><strong>Observable trail</strong> — transcripts land in dashboards with QA labels for coaching loops.</span>
+                        </li>
+                    </ol>
+                    <div class="vp-sidebar-note" style="text-align:left;border-style:dashed;">
+                        <p class="vp-sidebar-note-title" style="text-align:left;">Need handset audio?</p>
+                        <p class="vp-sidebar-note-caption" style="text-align:left;">Open the Vernika operator console Voice Test tile — it shares the identical Live websocket path.</p>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="demo-toast" class="demo-toast" role="status" aria-live="polite"></div>
+
+<script>
+    if (localStorage.getItem('theme') === 'light') {
+        document.body.classList.add('light-mode');
+    }
+
+    let _toastTimer;
+    function showDemoToast(message) {
+        var el = document.getElementById('demo-toast');
+        if (!el) return;
+        el.textContent = message;
+        el.classList.add('is-visible');
+        clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(function () {
+            el.classList.remove('is-visible');
+        }, 3400);
+    }
+
+    function closeMobileSidebar() {
+        var shell = document.getElementById('app-shell');
+        var backdrop = document.getElementById('sidebar-backdrop');
+        var btn = document.getElementById('menu-toggle');
+        if (shell) shell.classList.remove('sidebar-open');
+        if (backdrop) backdrop.classList.remove('visible');
+        document.body.classList.remove('nav-drawer-open');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleMobileSidebar(ev) {
+        if (ev) ev.stopPropagation();
+        var shell = document.getElementById('app-shell');
+        if (!shell) return;
+        var open = !shell.classList.contains('sidebar-open');
+        shell.classList.toggle('sidebar-open', open);
+        var backdrop = document.getElementById('sidebar-backdrop');
+        var btn = document.getElementById('menu-toggle');
+        if (backdrop) backdrop.classList.toggle('visible', open);
+        document.body.classList.toggle('nav-drawer-open', open);
+        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function showPageNav(pageId, navEl) {
+        showPage(pageId, navEl);
+        closeMobileSidebar();
+    }
+
+    function showPage(pageId, navEl) {
+        document.querySelectorAll('.page-section').forEach(function (el) { el.classList.remove('active'); });
+        var page = document.getElementById('page-' + pageId);
+        if (page) page.classList.add('active');
+        document.querySelectorAll('.nav-item').forEach(function (el) { el.classList.remove('active'); });
+        if (navEl) navEl.classList.add('active');
+    }
+
+    function toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+    }
+
+    function initializeDemoCall() {
+        var roleEl = document.getElementById('demo-role');
+        var phoneEl = document.getElementById('demo-phone');
+        var nameEl = document.getElementById('demo-name');
+        var role = roleEl ? roleEl.value : 'sellers';
+        var digits = phoneEl ? String(phoneEl.value || '').replace(/\D/g, '') : '';
+        if (digits.length < 8) {
+            showDemoToast('Add a fuller phone number (8+ digits) so the preview feels realistic.');
+            if (phoneEl) phoneEl.focus();
+            return;
+        }
+        var name = nameEl ? String(nameEl.value || '').trim() : '';
+        showDemoToast('Queued UX handshake for ' + role + ' → ' + (name || 'contact') + ' — connect telephony from the bridge when ready.');
+    }
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeMobileSidebar();
+    });
+    window.addEventListener('resize', function () {
+        if (window.innerWidth > 900) closeMobileSidebar();
+    });
+</script>
+</body>
+</html>

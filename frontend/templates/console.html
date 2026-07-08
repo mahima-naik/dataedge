@@ -1,0 +1,2427 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; font-src 'self';">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#F5F5F7">
+    <meta name="vernika-api-root" content="">
+    <title>Data Edge | Dashboard</title>
+    <!--VERNIKA_TUNING_SEED-->
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <script src="/static/apexcharts.min.js"></script>
+    <style>
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xl);
+            padding: var(--space-xl);
+        }
+
+        .border-blue { border-top: 3px solid #3b82f6 !important; }
+        .border-red { border-top: 3px solid #ef4444 !important; }
+        .border-green { border-top: 3px solid #10b981 !important; }
+        .border-purple { border-top: 3px solid #8b5cf6 !important; }
+
+        .stat-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: clamp(1.5rem, 4.5vw, 36px);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+
+        .badge-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: rgba(0, 122, 255, 0.04);
+        }
+
+        .progress-bar-bg {
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .tag-int {
+            background: rgba(52, 199, 89, 0.12);
+            color: #34C759;
+        }
+
+        .tag-noint {
+            background: rgba(255, 59, 48, 0.12);
+            color: #FF3B30;
+        }
+
+        .tag-call-later {
+            background: rgba(255, 204, 0, 0.15);
+            color: #D4A800;
+        }
+
+        .tag-cbk {
+            background: rgba(0, 122, 255, 0.12);
+            color: #007AFF;
+        }
+
+        .tag-fail {
+            background: rgba(255, 149, 0, 0.12);
+            color: #FF9500;
+        }
+
+        .btn-filter {
+            padding: 6px 14px;
+            border-radius: var(--radius-pill);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+
+        .btn-filter.active {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+        }
+
+        .btn-filter:hover:not(.active) {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .orb-ring {
+            position: absolute;
+            inset: 0;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            animation: ring-pulse 3s ease-in-out infinite;
+        }
+
+        .orb-ring-2 {
+            animation-delay: 1.5s;
+            inset: 16px;
+            border-color: rgba(0, 0, 0, 0.05);
+        }
+
+        @keyframes ring-pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+                transform: scale(1)
+            }
+
+            50% {
+                opacity: .4;
+                transform: scale(1.04)
+            }
+        }
+
+        .voice-orb {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--primary));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.15);
+        }
+
+        .voice-orb:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.25);
+        }
+
+        .voice-orb svg {
+            width: 48px;
+            height: 48px;
+            stroke: white;
+        }
+
+        .wave-bar {
+            height: 4px;
+            background: var(--primary);
+            border-radius: 2px;
+            opacity: 0.4;
+        }
+
+        @keyframes wave-anim {
+
+            0%,
+            100% {
+                height: 4px;
+                opacity: .4
+            }
+
+            50% {
+                height: 20px;
+                opacity: 1
+            }
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .modal.open,
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 32px 64px rgba(0, 0, 0, 0.3);
+        }
+
+        .page-section {
+            display: none;
+        }
+
+        .page-section.active {
+            display: block;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        select option {
+            background: #1a1a1a;
+            color: white;
+        }
+
+        body.light-mode select option {
+            background: #fff;
+            color: #1D1D1F;
+        }
+
+        /* Dial-failure classification (API: failure_title / failure_severity) */
+        .failure-chip {
+            display: inline-block;
+            max-width: 100%;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 8px;
+            line-height: 1.35;
+            border: 1px solid transparent;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: normal;
+            word-break: break-word;
+            vertical-align: middle;
+        }
+
+        .failure-chip.fail-sev-info {
+            background: rgba(0, 122, 255, 0.12);
+            color: #007AFF;
+            border-color: rgba(0, 122, 255, 0.28);
+        }
+
+        .failure-chip.fail-sev-warning {
+            background: rgba(255, 149, 0, 0.14);
+            color: #CC7700;
+            border-color: rgba(255, 149, 0, 0.35);
+        }
+
+        body.light-mode .failure-chip.fail-sev-warning {
+            color: #B35C00;
+        }
+
+        .failure-chip.fail-sev-error {
+            background: rgba(255, 59, 48, 0.12);
+            color: #FF3B30;
+            border-color: rgba(255, 59, 48, 0.35);
+        }
+
+        .failure-chip.fail-sev-muted {
+            background: rgba(142, 142, 147, 0.14);
+            color: var(--text-secondary);
+            border-color: var(--border);
+        }
+
+        .cd-failure-block {
+            padding: 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+
+        .cd-failure-block .cd-failure-kicker {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 8px;
+        }
+
+        .cd-failure-block.fail-sev-info {
+            background: rgba(0, 122, 255, 0.06);
+            border-color: rgba(0, 122, 255, 0.25);
+        }
+
+        .cd-failure-block.fail-sev-info .cd-failure-kicker {
+            color: #007AFF;
+        }
+
+        .cd-failure-block.fail-sev-warning {
+            background: rgba(255, 149, 0, 0.08);
+            border-color: rgba(255, 149, 0, 0.35);
+        }
+
+        .cd-failure-block.fail-sev-warning .cd-failure-kicker {
+            color: #FF9500;
+        }
+
+        .cd-failure-block.fail-sev-error {
+            background: rgba(255, 59, 48, 0.06);
+            border-color: rgba(255, 59, 48, 0.28);
+        }
+
+        .cd-failure-block.fail-sev-error .cd-failure-kicker {
+            color: var(--red);
+        }
+
+        .cd-failure-block.fail-sev-muted {
+            background: rgba(142, 142, 147, 0.08);
+            border-color: var(--border);
+        }
+
+        .cd-failure-block.fail-sev-muted .cd-failure-kicker {
+            color: var(--text-secondary);
+        }
+
+        .cd-failure-category {
+            font-size: 11px;
+            font-family: var(--font-mono);
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            word-break: break-all;
+        }
+
+        .cd-failure-title-line {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1.4;
+        }
+
+        .cd-failure-detail-line {
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 10px 0 0;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+        }
+
+        .role-switch {
+            display: none;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4px;
+            padding: 4px;
+            border-radius: var(--radius-md, 10px);
+            background: var(--surface-2, rgba(0, 0, 0, 0.06));
+            border: 1px solid var(--border, #e5e5e7);
+            margin-bottom: var(--space-sm);
+        }
+
+        .role-switch-btn {
+            border: none;
+            border-radius: 8px;
+            padding: 8px 4px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            background: transparent;
+            color: var(--text-secondary);
+            transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .role-switch-btn:hover:not(.active) {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        html[data-theme="dark"] .role-switch-btn:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .role-switch-btn.active {
+            background: var(--primary);
+            color: var(--white, #fff);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+        }
+
+        /* --- PREMIUM GLASSMORPHIC FILTER BAR --- */
+        .calls-filter-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 20px 24px;
+            background: rgba(255, 255, 255, 0.45);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        html[data-theme="dark"] .calls-filter-bar {
+            background: rgba(13, 13, 13, 0.45);
+        }
+
+        .filter-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            width: 100%;
+        }
+
+        .filter-label-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            flex-shrink: 0;
+        }
+
+        .filter-label-group svg {
+            width: 14px;
+            height: 14px;
+            opacity: 0.8;
+        }
+
+        /* Scrolling buttons container for mobile responsive, flex-wrap on desktop */
+        .filter-buttons-scroll {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        @media (max-width: 900px) {
+            .filter-header-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            .filter-buttons-scroll {
+                width: 100%;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding-bottom: 8px;
+                margin-bottom: -4px;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none; /* Hide default scrollbar on Firefox */
+            }
+            .filter-buttons-scroll::-webkit-scrollbar {
+                display: none; /* Hide scrollbar on Chrome/Safari */
+            }
+        }
+
+        /* Enhanced Filter Button style */
+        .btn-filter {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: var(--radius-pill);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: capitalize;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.6);
+            color: var(--text-secondary);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
+            white-space: nowrap;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+        }
+
+        html[data-theme="dark"] .btn-filter {
+            background: rgba(20, 20, 20, 0.5);
+            border-color: rgba(255, 255, 255, 0.06);
+        }
+
+        .btn-filter svg {
+            width: 14px;
+            height: 14px;
+            transition: transform 0.25s ease;
+        }
+
+        /* Hover lift effect */
+        .btn-filter:hover:not(.active) {
+            transform: translateY(-1.5px);
+            border-color: var(--text-secondary);
+            color: var(--text);
+            background: var(--white);
+            box-shadow: var(--shadow-sm);
+        }
+
+        html[data-theme="dark"] .btn-filter:hover:not(.active) {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-filter:hover svg {
+            transform: scale(1.1);
+        }
+
+        /* Active styling with gradients and shadow glows */
+        .btn-filter.active {
+            color: #ffffff !important;
+            border-color: transparent !important;
+            transform: translateY(-1px);
+        }
+
+        /* Active color-coded variants */
+        #filter-btn-all.active {
+            background: linear-gradient(135deg, #FF5E62, #DC2626);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.28);
+        }
+        #filter-btn-Interested.active {
+            background: linear-gradient(135deg, #34C759, #28A745);
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.28);
+        }
+        #filter-btn-NotInterested.active {
+            background: linear-gradient(135deg, #FF6B6B, #C21C1C);
+            box-shadow: 0 4px 12px rgba(194, 28, 28, 0.28);
+        }
+        #filter-btn-CallLater.active {
+            background: linear-gradient(135deg, #FFCC00, #D4A800);
+            box-shadow: 0 4px 12px rgba(212, 168, 0, 0.28);
+        }
+        #filter-btn-Callback.active {
+            background: linear-gradient(135deg, #007AFF, #0056B3);
+            box-shadow: 0 4px 12px rgba(0, 86, 179, 0.28);
+        }
+        #filter-btn-Failed.active {
+            background: linear-gradient(135deg, #FF9500, #E06C00);
+            box-shadow: 0 4px 12px rgba(224, 108, 0, 0.28);
+        }
+        #filter-btn-HighStar.active {
+            background: linear-gradient(135deg, #FFCC00, #FFA500);
+            box-shadow: 0 4px 12px rgba(255, 165, 0, 0.35);
+            color: #1c1c1e !important;
+        }
+        #filter-btn-Duration30.active {
+            background: linear-gradient(135deg, #8E54E9, #4776E6);
+            box-shadow: 0 4px 12px rgba(71, 118, 230, 0.28);
+        }
+        /* Second controls row styling */
+        .filter-controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+            flex-wrap: wrap;
+            width: 100%;
+        }
+
+        @media (max-width: 900px) {
+            .filter-controls-row {
+                justify-content: flex-start;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+        }
+
+        /* Sleek date range selector container */
+        .date-range-picker-container {
+            display: flex;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 4px 12px;
+            transition: all 0.25s ease;
+            gap: 6px;
+        }
+
+        html[data-theme="dark"] .date-range-picker-container {
+            background: rgba(20, 20, 20, 0.5);
+            border-color: rgba(255, 255, 255, 0.06);
+        }
+
+        .date-range-picker-container:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--red-muted);
+            background: var(--white);
+        }
+
+        html[data-theme="dark"] .date-range-picker-container:focus-within {
+            background: rgba(10, 10, 10, 0.8);
+        }
+
+        .date-range-picker-container svg.calendar-icon {
+            width: 15px;
+            height: 15px;
+            color: var(--text-secondary);
+            opacity: 0.8;
+            flex-shrink: 0;
+        }
+
+        /* Clean inputs without default styling */
+        .date-range-picker-container input[type="date"] {
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 4px;
+            border: none;
+            width: 110px;
+            color: var(--text);
+            background: transparent;
+            outline: none;
+            cursor: pointer;
+            box-shadow: none !important;
+        }
+
+        /* Custom scrollbar and alignment for date picker clear button */
+        .date-range-picker-container .btn-clear-dates {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            margin-left: 2px;
+            flex-shrink: 0;
+        }
+
+        .date-range-picker-container .btn-clear-dates:hover {
+            background: var(--red-muted);
+            color: var(--primary);
+        }
+
+        /* Search Box Redesign */
+        .search-input-wrapper {
+            position: relative;
+            flex: 1;
+            max-width: 320px;
+        }
+
+        @media (max-width: 900px) {
+            .search-input-wrapper {
+                max-width: none;
+                width: 100%;
+            }
+        }
+
+        .search-input-wrapper svg.search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 15px;
+            height: 15px;
+            color: var(--text-tertiary);
+            pointer-events: none;
+            transition: color 0.25s ease;
+        }
+
+        .search-input-wrapper input[type="search"] {
+            width: 100%;
+            padding: 10px 16px 10px 38px;
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.5);
+            color: var(--text);
+            transition: all 0.25s ease;
+        }
+
+        html[data-theme="dark"] .search-input-wrapper input[type="search"] {
+            background: rgba(20, 20, 20, 0.5);
+            border-color: rgba(255, 255, 255, 0.06);
+        }
+
+        .search-input-wrapper input[type="search"]:focus {
+            background: var(--white);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--red-muted);
+        }
+
+        html[data-theme="dark"] .search-input-wrapper input[type="search"]:focus {
+            background: rgba(10, 10, 10, 0.8);
+        }
+
+        .search-input-wrapper input[type="search"]:focus + svg.search-icon {
+            color: var(--primary);
+        }
+
+        /* Export Button Styles */
+        .btn-export-csv {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: var(--radius-lg);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.25s ease;
+            user-select: none;
+        }
+
+        html[data-theme="dark"] .btn-export-csv {
+            background: rgba(20, 20, 20, 0.5);
+            border-color: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+        }
+
+        .btn-export-csv svg {
+            width: 14px;
+            height: 14px;
+            color: var(--text-secondary);
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+
+        .btn-export-csv:hover {
+            background: var(--red-muted);
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: translateY(-1px);
+        }
+
+        .btn-export-csv:hover svg {
+            color: var(--primary);
+            transform: translateY(1px);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
+    <div class="app-layout" id="app-shell">
+
+        <!-- ====== SIDEBAR ====== -->
+        <aside class="sidebar" id="app-sidebar" aria-label="Main navigation">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">X</div>
+                <div>
+                    <div class="sidebar-title">PitchX Solutions</div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;" id="role-badge">Data Edge</div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-label">Overview</div>
+                    <div class="nav-item active" id="nav-dashboard" onclick="showPageNav('dashboard',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <rect x="3" y="3" width="7" height="7" />
+                            <rect x="14" y="3" width="7" height="7" />
+                            <rect x="14" y="14" width="7" height="7" />
+                            <rect x="3" y="14" width="7" height="7" />
+                        </svg>
+                        Dashboard
+                    </div>
+                    <div class="nav-item" id="nav-campaigns" onclick="showPageNav('campaigns',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                        </svg>
+                        Campaigns
+                    </div>
+
+                </div>
+                <div class="nav-section">
+                    <div class="nav-label">Tools</div>
+                    <div class="nav-item" id="nav-manual" onclick="showPageNav('manual',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path
+                                d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l2.29-2.29a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
+                        </svg>
+                        Make a Call
+                    </div>
+                    <div class="nav-item" id="nav-tuning" onclick="showPageNav('tuning',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path
+                                d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.77 3.77z" />
+                        </svg>
+                        Configuration
+                    </div>
+                    <div class="nav-item" id="nav-voice" onclick="showPageNav('voice',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+                            <path d="M19 10v1a7 7 0 01-14 0v-1M12 19v4M8 23h8"/>
+                        </svg>
+                        Voice Test
+                    </div>
+                    <div class="nav-item" id="nav-feedback" onclick="showPageNav('feedback',this)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke-width="2"/>
+                            <polyline points="14 2 14 8 20 8" stroke-width="2"/>
+                            <line x1="16" y1="13" x2="8" y2="13" stroke-width="2"/>
+                            <line x1="16" y1="17" x2="8" y2="17" stroke-width="2"/>
+                            <polyline points="10 9 9 9 8 9" stroke-width="2"/>
+                        </svg>
+                        Lead Feedback
+                    </div>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="role-switch" id="role-switch" role="group" aria-label="Campaign role">
+                    <button type="button" class="role-switch-btn" data-role="buyers" onclick="switchRole('buyers')">Buyers</button>
+                    <button type="button" class="role-switch-btn" data-role="sellers" onclick="switchRole('sellers')">Sellers</button>
+                    <button type="button" class="role-switch-btn" data-role="rfqs" onclick="switchRole('rfqs')">RFQ</button>
+                </div>
+
+                <button class="btn btn-ghost btn-sm" onclick="toggleTheme()" id="theme-toggle-btn"
+                    style="width:100%;margin-bottom:var(--space-sm);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;">
+                        <path id="theme-icon-path" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke-width="2"/>
+                    </svg>
+                    <span id="theme-toggle-label">Dark Mode</span>
+                </button>
+                <button class="btn btn-ghost btn-sm" onclick="logout()"
+                    style="width:100%;color:var(--red);border-color:var(--red);opacity:.8;">
+                    Log Out
+                </button>
+            </div>
+        </aside>
+
+        <!-- ====== MAIN CONTENT ====== -->
+        <div class="main-content">
+
+            <header class="mobile-toolbar">
+                <button type="button" class="mobile-menu-btn" id="menu-toggle" onclick="toggleMobileSidebar(event)"
+                    aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        aria-hidden="true">
+                        <path d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </button>
+                <span class="mobile-toolbar-title">Data Edge</span>
+            </header>
+
+            <!-- ── DASHBOARD ── -->
+            <div id="page-dashboard" class="page-section active">
+                <div class="page-head-split">
+                    <div>
+                        <h2 style="margin:0;font-size:clamp(1.25rem, 4vw, 28px);font-weight:800;letter-spacing:-.02em;">
+                            Dashboard</h2>
+                        <p style="margin:6px 0 0;color:var(--text-secondary);font-size:14px;">
+                            Activity for <strong id="role-label-dash">Data Edge</strong>
+                        </p>
+                    </div>
+                    <div class="page-head-actions">
+                        <button class="btn btn-ghost btn-sm touch-target" onclick="openRescheduleModal()"
+                            title="Reschedule calls based on outcome criteria">Reschedule Calls</button>
+                        <button class="btn btn-ghost btn-sm touch-target" onclick="downloadFilteredCSV()"
+                            title="Download filtered results as CSV">Export CSV</button>
+                        <button class="btn btn-primary btn-sm touch-target"
+                            onclick="showPageNav('manual', document.getElementById('nav-manual'))">+ New Call</button>
+                    </div>
+                </div>
+
+                <!-- ── KPI STATS: 12 cards in 4-column grid ── -->
+                <div class="stats-grid">
+                    <div class="stat-card border-blue">
+                        <div class="stat-label" id="lbl-total">Total Leads</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-total">0</div>
+                        </div>
+                        <div class="stat-sparkline" id="spark-total"></div>
+                    </div>
+                    <div class="stat-card border-red">
+                        <div class="stat-label" id="lbl-called">Calls Made</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-called">0</div>
+                            <span class="stat-pct" id="pct-called"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-called"></div>
+                    </div>
+                    <div class="stat-card border-green">
+                        <div class="stat-label" id="lbl-interested">Interested</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-interested-count">0</div>
+                            <span class="stat-pct" id="pct-interested"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-interested"></div>
+                    </div>
+                    <div class="stat-card border-red">
+                        <div class="stat-label" id="lbl-not-interested">Not Interested</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-not-interested">0</div>
+                            <span class="stat-pct" id="pct-not-interested"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-not-interested"></div>
+                    </div>
+                    <div class="stat-card border-purple">
+                        <div class="stat-label" id="lbl-inbound">Inbound Callbacks</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-inbound-callbacks">0</div>
+                            <span class="stat-pct" id="pct-inbound"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-inbound"></div>
+                    </div>
+                    <div class="stat-card border-green">
+                        <div class="stat-label" id="lbl-conversion">Conversion Rate</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-conversion-rate">0%</div>
+                        </div>
+                        <div class="stat-sparkline" id="spark-conversion"></div>
+                    </div>
+                    <div class="stat-card border-red">
+                        <div class="stat-label" id="lbl-attempts">AI Attempts</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-attempts">0</div>
+                            <span class="stat-pct" id="pct-attempts"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-attempts"></div>
+                    </div>
+                    <div class="stat-card border-red">
+                        <div class="stat-label" id="lbl-failed">Failed Calls</div>
+                        <div class="stat-value-row">
+                            <div class="stat-value" id="stat-failed">0</div>
+                            <span class="stat-pct" id="pct-failed"></span>
+                        </div>
+                        <div class="stat-sparkline" id="spark-failed"></div>
+                    </div>
+                    <div class="stat-card border-blue">
+                        <div class="stat-label" id="lbl-rating">Avg Rating</div>
+                        <div class="stat-value" id="perf-avg-rating">—</div>
+                    </div>
+                    <div class="stat-card border-red" style="cursor:pointer;" onclick="openTotalCalledModal()">
+                        <div class="stat-label" id="lbl-total-called" style="display:flex;align-items:center;gap:6px;">Total Called <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
+                        <div class="stat-value" id="perf-total-called">0</div>
+                    </div>
+                    <div class="stat-card border-green">
+                        <div class="stat-label" id="lbl-callback-rate">Callback Rate</div>
+                        <div class="stat-value" id="perf-callback-rate">0%</div>
+                    </div>
+                    <div class="stat-card border-red">
+                        <div class="stat-label" id="lbl-fail-rate">Fail Rate</div>
+                        <div class="stat-value" id="perf-fail-rate">0%</div>
+                    </div>
+                </div>
+
+                <!-- ── MAIN CHARTS: Timeline (2-col span) + Outcome (1 col) ── -->
+                <div class="charts-grid-2">
+                    <div class="card">
+                        <div class="chart-title">Engagement Timeline</div>
+                        <div id="chart-timeline" style="min-height:240px;"></div>
+                    </div>
+                    <div class="card">
+                        <div class="chart-title">Outcome Distribution</div>
+                        <div class="chart-subtitle">From post-call transcript QA</div>
+                        <div id="chart-pie" style="min-height:240px;"></div>
+                    </div>
+                </div>
+
+                <!-- ── SECONDARY CHARTS: 3-column row ── -->
+                <div class="charts-grid-3">
+                    <div class="card">
+                        <div class="chart-title">Conversion Rate</div>
+                        <div class="chart-subtitle">Interested / Total Called</div>
+                        <div id="chart-conversion" style="min-height:200px;"></div>
+                    </div>
+                    <div class="card">
+                        <div class="chart-title">Campaign Progress</div>
+                        <div class="chart-subtitle">Completed · Failed · Pending</div>
+                        <div id="chart-progress" style="min-height:200px;"></div>
+                    </div>
+                    <div class="card">
+                        <div class="chart-title">Day of Week</div>
+                        <div class="chart-subtitle">Calls by day of week</div>
+                        <div id="chart-weekday" style="min-height:200px;"></div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:var(--space-xl);">
+                    <div class="chart-title">Hourly Distribution</div>
+                    <div class="chart-subtitle">Calls by hour of day (local time)</div>
+                    <div id="chart-hourly" style="min-height:200px;"></div>
+                </div>
+
+
+                <!-- ── INBOUND CALLBACKS ── -->
+                <div class="card" style="margin-bottom:var(--space-xl);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 14px;gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="font-size:15px;font-weight:700;margin:0;">Inbound callbacks</h3>
+                            <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 0;">Callers who dialed your line. Matched to leads by phone when possible.</p>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:4px 10px;" onclick="loadInboundCallbacks()">Refresh</button>
+                    </div>
+                    <div id="inbound-callbacks-empty-dash" style="display:none;font-size:13px;color:var(--text-secondary);padding:12px 0;">No inbound calls logged yet for this role.</div>
+                    <div class="table-wrap" style="max-height:280px;overflow-y:auto;">
+                        <table style="font-size:13px;">
+                            <thead>
+                                <tr>
+                                    <th style="padding-left:4px;">From</th>
+                                    <th>To</th>
+                                    <th>Matched</th>
+                                    <th>Campaign</th>
+                                    <th style="text-align:right;padding-right:4px;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inbound-callbacks-tbody-dash">
+                                <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary);">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ── FILTER + CALLS TABLE ── -->
+                <div class="card" style="padding:0;overflow:hidden;">
+                    <div class="calls-filter-bar">
+                        <!-- Row 1: Header/Filters -->
+                        <div class="filter-header-row">
+                            <div class="filter-label-group">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                                </svg>
+                                <span>Filter</span>
+                            </div>
+                            <div class="filter-buttons-scroll">
+                                <button id="filter-btn-all" class="btn-filter active" onclick="setFilter('all',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                        <line x1="9" y1="9" x2="15" y2="9"></line>
+                                        <line x1="9" y1="13" x2="15" y2="13"></line>
+                                        <line x1="9" y1="17" x2="13" y2="17"></line>
+                                    </svg>
+                                    All
+                                </button>
+                                <button id="filter-btn-Interested" class="btn-filter" onclick="setFilter('Interested',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                    </svg>
+                                    Interested
+                                </button>
+                                <button id="filter-btn-NotInterested" class="btn-filter" onclick="setFilter('Not Interested',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                                    </svg>
+                                    Not Interested
+                                </button>
+                                <button id="filter-btn-CallLater" class="btn-filter" onclick="setFilter('Call Later',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                    Call Later
+                                </button>
+                                <button id="filter-btn-Callback" class="btn-filter" onclick="setFilter('Callback',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                    Callback
+                                </button>
+                                <button id="filter-btn-Failed" class="btn-filter" onclick="setFilter('failed',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                    </svg>
+                                    Failed
+                                </button>
+                                <button id="filter-btn-HighStar" class="btn-filter" onclick="setFilter('star4',this)">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                                    </svg>
+                                    ★ 4+
+                                </button>
+                                <button id="filter-btn-Duration30" class="btn-filter" onclick="setFilter('duration30',this)">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="10" y1="2" x2="14" y2="2"></line>
+                                        <line x1="12" y1="14" x2="15" y2="11"></line>
+                                        <circle cx="12" cy="14" r="8"></circle>
+                                    </svg>
+                                    Calls > 30s
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Row 2: Search and Dates -->
+                        <div class="filter-controls-row">
+                            <!-- Date picker block -->
+                            <div class="date-range-picker-container">
+                                <svg class="calendar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                                </svg>
+                                <input type="date" id="filter-date-from" onchange="renderCalls()" title="From date">
+                                <span style="color:var(--text-secondary);font-size:12px;font-weight:600;user-select:none;margin:0 2px;">to</span>
+                                <input type="date" id="filter-date-to" onchange="renderCalls()" title="To date">
+                                <button class="btn-clear-dates" onclick="clearDateFilters()" title="Clear date filters">Clear</button>
+                            </div>
+
+                            <!-- Search Input -->
+                            <div class="search-input-wrapper">
+                                <input id="search-input" type="search" oninput="renderCalls(); if (typeof renderManifest === 'function') renderManifest();" placeholder="Search name / phone / summary…">
+                                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </div>
+
+                            <!-- Export Button -->
+                            <button class="btn-export-csv" onclick="downloadFilteredCSV()" title="Download filtered results as CSV">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                <span>Export CSV</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                <th style="padding-left:20px;">Contact</th>
+                                    <th>Phone</th>
+                                    <th>Date/Time</th>
+                                    <th>Summary <span style="font-size:10px;font-weight:600;color:var(--text-secondary);">(transcript QA)</span></th>
+                                    <th>Rating</th>
+                                    <th>Outcome <span style="font-size:10px;font-weight:600;color:var(--text-secondary);">(from transcript)</span></th>
+                                    <th>Failure reason <span style="font-size:10px;font-weight:600;color:var(--text-secondary);">(dial / provider)</span></th>
+                                    <th>Recording</th>
+                                    <th style="text-align:right;padding-right:20px;">Transcript</th>
+                                </tr>
+                            </thead>
+                            <tbody id="calls-tbody">
+                                <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-secondary);">No calls yet — start a campaign or use Make a Call.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── CAMPAIGNS ── -->
+            <div id="page-campaigns" class="page-section">
+                <div class="page-head-split">
+                    <div>
+                        <h2 style="font-size:clamp(1.25rem,4vw,28px);font-weight:800;letter-spacing:-.02em;margin:0;">Campaigns</h2>
+                        <p style="color:var(--text-secondary);font-size:14px;margin:6px 0 0;">Upload leads and manage outbound calling campaigns</p>
+                    </div>
+                    <div class="page-head-actions">
+                        <button class="btn btn-ghost btn-sm touch-target" onclick="openRescheduleModal()"
+                            title="Reschedule calls based on outcome criteria">Reschedule Calls</button>
+                    </div>
+                </div>
+
+                <!-- Row 1: Upload + Campaign Control -->
+                <div class="charts-grid-2" style="margin-bottom:var(--space-xl);">
+                    <!-- Upload -->
+                    <div class="card upload-zone"
+                        onclick="document.getElementById('file-upload').click()">
+                        <div style="text-align:center;padding:var(--space-3xl) 0;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:44px;height:44px;color:var(--text-tertiary);margin-bottom:var(--space-lg);">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="1.5"/>
+                            </svg>
+                            <p style="font-weight:700;font-size:17px;margin:0 0 4px;color:var(--text);">Upload Lead File</p>
+                            <p style="font-size:13px;color:var(--text-secondary);margin:0;">CSV or Excel (.xlsx, .xls)</p>
+                            <p id="upload-preview-summary" style="display:none;margin:var(--space-lg) 0 0;font-size:13px;color:var(--primary);font-weight:700;"></p>
+                        </div>
+                        <input type="file" id="file-upload" style="display:none;" accept=".csv,.xlsx,.xls" onchange="uploadLeads(this)">
+                    </div>
+
+                    <!-- Campaign Control -->
+                    <div class="card">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-xl);">
+                            <h3 style="font-size:16px;font-weight:700;margin:0;">Campaign Control</h3>
+                            <span id="campaign-status-pill" class="badge-tag tag-cbk" style="font-size:11px;font-weight:700;">Outbound: syncing…</span>
+                        </div>
+
+                        <div style="margin-bottom:var(--space-xl);">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-sm);">
+                                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);">Progress</span>
+                                <span id="camp-total" style="font-size:13px;font-weight:700;color:var(--text);">0 leads</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" id="progress-bar" style="width:0%"></div>
+                            </div>
+                        </div>
+
+                        <div id="campaign-quiet-hours-banner" role="status" style="display:none;margin-bottom:var(--space-md);padding:10px 14px;border-radius:var(--radius-md);background:var(--surface-2, #f5f5f7);border:1px solid var(--border, #e5e5e7);font-size:13px;color:var(--text-secondary);line-height:1.45;"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-xl);">
+                            <button id="btn-start" class="btn btn-primary btn-sm" onclick="startCampaign()">Start Campaign</button>
+                            <button id="btn-stop" class="btn btn-ghost btn-sm" onclick="stopCampaign()" style="color:var(--red);border-color:var(--red);">Stop Campaign</button>
+                            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('file-upload').click()">Load File</button>
+                            <button id="btn-reanalyze-all" class="btn btn-ghost btn-sm" onclick="startReanalyzeAll()">Re-analyze All</button>
+                            <button class="btn btn-ghost btn-sm" onclick="executeWipe()" style="color:var(--red);">Clear All</button>
+                        </div>
+
+                        <div style="padding-top:var(--space-lg);border-top:1px solid var(--border);">
+                            <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:var(--space-sm);">Pause between calls (seconds)</label>
+                            <p id="campaign-inter-call-gap-note" style="font-size:12px;color:var(--text-secondary);margin:0 0 var(--space-md);line-height:1.4;">Wait time after each outbound call before dialing the next lead. Enter 0–1200 seconds and save.</p>
+                            <div style="display:flex;gap:var(--space-sm);align-items:center;">
+                                <input type="number" id="campaign-inter-call-gap" min="0" max="1200" step="1" value="5" style="width:100px;font-size:14px;padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--text);">
+                                <button type="button" id="campaign-inter-call-gap-save" class="btn btn-primary btn-sm" onclick="saveInterCallGap()" style="padding:8px 16px;">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: Schedule Campaign -->
+                <div class="card" style="margin-bottom:var(--space-xl);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-xl);gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="font-size:16px;font-weight:700;margin:0;">Schedule Campaign</h3>
+                            <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 0;">Pick a start time, and optionally a stop time. The campaign auto-starts and auto-stops within that window.</p>
+                        </div>
+                        <span id="schedule-tz-pill" style="font-size:11px;color:var(--text-secondary);font-family:var(--font-mono);background:var(--bg-secondary);padding:4px 10px;border-radius:var(--radius-pill);"></span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:var(--space-md);align-items:end;">
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:6px;">Start At</label>
+                            <input type="datetime-local" id="schedule-when" step="60">
+                        </div>
+                        <div>
+                            <label style="display:flex;justify-content:space-between;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:6px;">
+                                <span>Stop At <span style="color:var(--text-tertiary);font-weight:500;text-transform:none;letter-spacing:0;">(optional)</span></span>
+                                <button type="button" onclick="clearScheduleStop()" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:11px;padding:0;text-transform:none;letter-spacing:0;">clear</button>
+                            </label>
+                            <input type="datetime-local" id="schedule-stop" step="60">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:6px;">Label</label>
+                            <input type="text" id="schedule-name" placeholder="e.g. Friday morning blast" maxlength="120">
+                        </div>
+                        <button id="btn-schedule" class="btn btn-primary" onclick="addSchedule()" style="height:42px;min-width:140px;">Schedule</button>
+                    </div>
+                    <div id="schedules-panel" style="margin-top:var(--space-xl);border-top:1px solid var(--border);padding-top:var(--space-lg);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-md);">
+                            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);">Scheduled Runs</span>
+                            <button class="btn btn-ghost btn-sm" onclick="loadSchedules()" style="font-size:11px;padding:4px 10px;">Refresh</button>
+                        </div>
+                        <div id="schedules-list" style="font-size:13px;">
+                            <div style="text-align:center;padding:var(--space-lg);color:var(--text-secondary);">No schedules yet.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: Inbound Callbacks + Lead Manifest side by side -->
+                <div class="charts-grid-2" style="margin-bottom:var(--space-xl);">
+                    <div class="card" style="display:flex;flex-direction:column;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-lg);gap:12px;flex-wrap:wrap;">
+                            <div>
+                                <h3 style="font-size:15px;font-weight:700;margin:0;">Inbound Callbacks</h3>
+                                <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 0;">Callers who dialed your line. Matched to leads by phone when possible.</p>
+                            </div>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="loadInboundCallbacks()">Refresh</button>
+                        </div>
+                        <div id="inbound-callbacks-empty" style="display:none;font-size:13px;color:var(--text-secondary);padding:12px 0;">No inbound calls logged yet for this role.</div>
+                        <div class="table-wrap" style="flex:1;max-height:320px;overflow-y:auto;">
+                            <table style="font-size:13px;">
+                                <thead>
+                                    <tr>
+                                        <th style="padding-left:4px;">From</th>
+                                        <th>To</th>
+                                        <th>Matched</th>
+                                        <th>Campaign</th>
+                                        <th style="text-align:right;padding-right:4px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="inbound-callbacks-tbody">
+                                    <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary);">Loading…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card" style="display:flex;flex-direction:column;padding:0;overflow:hidden;">
+                        <div style="padding:var(--space-xl) var(--space-2xl);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);">Lead Manifest</span>
+                            <span id="manifest-count" style="font-size:12px;color:var(--text-tertiary);">0 leads</span>
+                        </div>
+                        <div class="table-wrap" style="flex:1;max-height:360px;overflow-y:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th style="padding-left:20px;">Name</th>
+                                        <th>Phone</th>
+                                        <th>Company</th>
+                                        <th>Status</th>
+                                        <th style="max-width:200px;">Failure reason</th>
+                                        <th style="text-align:right;padding-right:20px;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="manifest-tbody">
+                                    <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-secondary);">No leads uploaded</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── MAKE A CALL ── -->
+            <div id="page-manual" class="page-section">
+                <div class="page-head-split">
+                    <div>
+                        <h2 style="font-size:clamp(1.25rem,4vw,28px);font-weight:800;letter-spacing:-.02em;margin:0;">Make a Call</h2>
+                        <p style="color:var(--text-secondary);font-size:14px;margin:6px 0 0;">Initiate a single outbound call for testing</p>
+                    </div>
+                </div>
+
+                <div class="charts-grid-2" style="margin-bottom:var(--space-xl);">
+                    <!-- Call Form -->
+                    <div class="card">
+                        <h3 style="font-size:16px;font-weight:700;margin:0 0 var(--space-2xl);">Call Details</h3>
+
+                        <div class="form-group">
+                            <label for="manual-name">Contact Name</label>
+                            <input type="text" id="manual-name" placeholder="e.g. Rahul Sharma" value="Test Contact">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="manual-phone-local">Phone Number</label>
+                            <div id="manual-phone-wrap" style="display:flex;align-items:stretch;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--white);margin-top:6px;">
+                                <span id="manual-phone-cc" title="Indian numbers dial with +91 by default."
+                                    style="display:inline-flex;align-items:center;padding:0 16px;font-size:13px;font-weight:700;color:var(--text-secondary);background:var(--bg-secondary);flex-shrink:0;border-right:1px solid var(--border);">+91</span>
+                                <input type="tel" id="manual-phone-local" maxlength="22" autocomplete="tel-national"
+                                    inputmode="tel" placeholder="9876543210"
+                                    style="border:none;background:transparent;flex:1;min-width:0;padding:12px 16px;font-size:15px;color:var(--text);outline:none;"
+                                    oninput="if (typeof refreshManualPhoneCcBadge === 'function') refreshManualPhoneCcBadge()" />
+                            </div>
+                            <p style="font-size:12px;color:var(--text-tertiary);margin:8px 0 0;line-height:1.45;">
+                                Enter 10-digit mobile after <strong>+91</strong>. For other countries, type the full number starting with <strong>+</strong>.
+                            </p>
+                        </div>
+
+                        <div style="margin-bottom:var(--space-2xl);padding:var(--space-lg);background:var(--red-muted);border-radius:var(--radius-xl);border:1px solid var(--red-muted);">
+                            <p style="font-size:13px;color:var(--primary);margin:0;font-weight:600;">
+                                Will call using the <strong id="manual-role-label">Data Edge</strong> agent and Vobiz account.
+                            </p>
+                        </div>
+
+                        <button class="btn btn-primary btn-lg btn-block" onclick="triggerManualTest()" style="gap:var(--space-sm);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:18px;height:18px;">
+                                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l2.29-2.29a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" stroke-width="2"/>
+                            </svg>
+                            Initiate Call
+                        </button>
+                    </div>
+
+                    <!-- Call Result -->
+                    <div class="card" id="call-result-card"
+                        style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:320px;border-style:dashed;">
+                        <div style="width:64px;height:64px;border-radius:50%;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;margin-bottom:var(--space-lg);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:28px;height:28px;color:var(--text-tertiary);">
+                                <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l2.29-2.29a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" stroke-width="1.5"/>
+                            </svg>
+                        </div>
+                        <p style="font-weight:700;font-size:17px;color:var(--text-secondary);margin:0 0 4px;">Waiting for Call</p>
+                        <p style="font-size:13px;color:var(--text-tertiary);max-width:240px;margin:0;">Call status and live updates will appear here.</p>
+                    </div>
+                </div>
+
+                <!-- Recent Manual Calls -->
+                <div class="card" style="margin-bottom:var(--space-xl);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-lg);gap:10px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="font-size:15px;font-weight:700;margin:0;">Recent Manual Calls</h3>
+                            <p style="font-size:12px;color:var(--text-secondary);margin:4px 0 0;">Last 10 test calls placed from this panel.</p>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-sm" onclick="loadRecentManualCalls()">Refresh</button>
+                    </div>
+                    <div id="manual-recent-empty" style="display:none;font-size:13px;color:var(--text-secondary);padding:12px 0;text-align:center;">No manual calls logged yet for this role.</div>
+                    <div id="manual-recent-list"></div>
+                </div>
+            </div>
+
+            <!-- ── CONFIGURATION ── -->
+            <div id="page-tuning" class="page-section">
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;">
+                    <div>
+                        <h2 style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;">Configuration
+                        </h2>
+                        <p style="color:var(--text-secondary);font-size:14px;margin:0;">
+                            Agent prompt, knowledge base & greeting for <strong id="tuning-role-label">Data Edge</strong>
+                        </p>
+                    </div>
+                    <button class="btn btn-primary" onclick="saveTuning()">Save Changes</button>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:16px;">
+                    <!-- Prompt -->
+                    <div class="card" style="display:flex;flex-direction:column;padding:24px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                            <div>
+                                <h3 style="font-size:15px;font-weight:700;margin:0 0 4px;">System Prompt</h3>
+                                <p style="font-size:11px;color:var(--text-secondary);margin:0;">Personality, behavior
+                                    rules, conversation logic</p>
+                            </div>
+                            <span
+                                style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--gray-200);color:var(--text-secondary);padding:4px 10px;border-radius:var(--radius-pill);">Active</span>
+                        </div>
+                        <textarea id="tuning-prompt"
+                            style="flex:1;min-height:560px;width:100%;font-family:var(--font-mono);font-size:13px;line-height:1.6;resize:none;background:rgba(0,0,0,.04);border-radius:var(--radius-xl);border:1px solid var(--border);"
+                            placeholder="Enter agent instructions..."></textarea>
+                    </div>
+
+                    <!-- Right column: Greeting + KB -->
+                    <div style="display:flex;flex-direction:column;gap:16px;">
+                        <!-- Greeting -->
+                        <div id="tuning-greeting-card" class="card" style="padding:20px;">
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap;">
+                                <div>
+                                    <h3 style="font-size:14px;font-weight:700;margin:0 0 2px;">Greeting &amp; opening audio</h3>
+                                    <p style="font-size:10px;color:var(--text-secondary);margin:0;max-width:340px;line-height:1.4;">
+                                        Text for the opening line. With default server settings, a saved <strong>PCM</strong> plays first if present; Live-first mode (env) speaks it with Gemini Live instead. Preview uses REST TTS (~similar voice).</p>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <button type="button" id="preview-greeting-btn" onclick="previewGreeting()"
+                                        title="Hear REST TTS preview (not identical to Live)"
+                                        style="height:32px;padding:0 14px;border-radius:var(--radius-pill);border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;font-size:11px;font-weight:700;">TTS preview</button>
+                                    <button type="button" id="capture-live-greeting-btn" onclick="captureLiveGreeting()"
+                                        title="Capture opening from Gemini Live native voice and save PCM"
+                                        style="height:32px;padding:0 14px;border-radius:var(--radius-pill);border:1px solid var(--border);background:var(--primary);color:var(--white);cursor:pointer;font-size:11px;font-weight:700;">Capture Live</button>
+                                    <button type="button" id="record-greeting-btn" onclick="recordGreeting()" title="Save opening PCM (Gemini Live voice — matches the call)"
+                                        style="width:32px;height:32px;border-radius:50%;background:var(--primary);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="white" style="width:14px;height:14px;">
+                                            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                                            <path d="M19 10v1a7 7 0 01-14 0v-1" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea id="tuning-greeting"
+                                style="width:100%;height:90px;font-size:13px;resize:none;background:var(--gray-100);border:1px solid var(--border);border-radius:var(--radius-xl);padding:12px;color:var(--text);"
+                                placeholder="First line for this role (Adithi for Buyers, Devika for Sellers, …). Loads from tuning + defaults."></textarea>
+                            <p style="font-size:10px;color:var(--text-secondary);margin:8px 0 0;"><strong>Save</strong> stores greeting text. <strong>Capture Live</strong> or the mic icon saves opening PCM in the <strong>same Gemini Live voice</strong> as the call. <strong>Preview</strong> is REST TTS only (may sound different).</p>
+                        </div>
+
+                        <!-- Knowledge Base -->
+                        <div class="card" style="flex:1;display:flex;flex-direction:column;padding:20px;">
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                                <div>
+                                    <h3 style="font-size:14px;font-weight:700;margin:0 0 2px;">Knowledge Base</h3>
+                                    <p style="font-size:10px;color:var(--text-secondary);margin:0;">RAG grounding —
+                                        Data Edge agent reads this on every call</p>
+                                </div>
+                                <div style="display:flex;gap:8px;">
+                                    <input type="file" id="rag-file-input" multiple style="display:none;"
+                                        accept=".pdf,.docx,.txt,.md,.markdown,.csv,.xlsx,.json"
+                                        onchange="uploadRagDocs(this.files)">
+                                    <button id="rag-upload-btn"
+                                        onclick="document.getElementById('rag-file-input').click()"
+                                        title="Upload documents (PDF, DOCX, TXT, MD, CSV, XLSX, JSON — max 10 MB each)"
+                                        style="height:32px;padding:0 12px;border-radius:var(--radius-pill);background:var(--primary);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            style="width:13px;height:13px;stroke-width:2.5;">
+                                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                                        </svg>
+                                        <span>Upload</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="rag-dropzone" style="flex:1;display:flex;flex-direction:column;position:relative;">
+                                <textarea id="tuning-rag"
+                                    style="flex:1;min-height:280px;width:100%;font-size:12px;font-family:var(--font-mono);line-height:1.5;resize:none;background:rgba(0,0,0,.02);border:1px solid var(--border);border-radius:10px;padding:14px;color:var(--text);"
+                                    placeholder="Business intelligence, product info, pricing, FAQs… or drop files here (PDF / DOCX / TXT / MD / CSV / XLSX / JSON)"></textarea>
+                                <div id="rag-drop-overlay"
+                                    style="display:none;position:absolute;inset:0;border-radius:10px;border:2px dashed var(--primary);background:rgba(0,0,0,.04);align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--primary);pointer-events:none;">
+                                    Drop files to add to the Knowledge Base</div>
+                            </div>
+                            <p style="font-size:10px;color:var(--text-secondary);margin:8px 0 0;">Tip: drop multiple
+                                files — each is appended with a source header so you can see what came from where.</p>
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:10px 12px;background:rgba(0,0,0,.03);border-radius:8px;">
+                                <span
+                                    style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);">Status</span>
+                                <span id="rag-status-label"
+                                    style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--primary);">READY</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── CAMPAIGN CASES ── -->
+                <div class="card" style="margin-top:24px;padding:24px;">
+                    <div
+                        style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+                        <div>
+                            <h3 style="font-size:15px;font-weight:700;margin:0 0 4px;">Campaign Cases for <span
+                                    id="cases-role-label">Data Edge</span></h3>
+                            <p style="font-size:11px;color:var(--text-secondary);margin:0;max-width:560px;">
+                                Define named campaigns (e.g. "April Steel Sheets Push", "Diwali Discount Drive") and
+                                tick the one that's running today.
+                                The active case's instructions are appended to the agent prompt for every call from this
+                                role — no need to edit the prompt.
+                            </p>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span id="cases-active-pill"
+                                style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;background:rgba(0,0,0,.05);color:var(--text-secondary);padding:5px 10px;border-radius:999px;">No
+                                active case</span>
+                            <button class="btn btn-primary btn-sm" onclick="openModal('modal-case')">+ New Case</button>
+                        </div>
+                    </div>
+                    <div id="cases-list" style="display:flex;flex-direction:column;gap:10px;">
+                        <div
+                            style="font-size:13px;color:var(--text-secondary);text-align:center;padding:24px;border:1px dashed var(--border);border-radius:12px;">
+                            Loading cases…
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── VOICE TEST ── -->
+            <div id="page-voice" class="page-section">
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:28px;">
+                    <div>
+                        <h2 style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px;">Voice Test</h2>
+                        <p style="color:var(--text-secondary);font-size:14px;margin:0;">
+                            Live voice link for <strong id="test-role-label">Sellers</strong>
+                        </p>
+                    </div>
+                    <div id="test-status" style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--primary);padding:8px 16px;border:1px solid rgba(0,122,255,.2);border-radius:999px;">Ready</div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">
+                    <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:500px;position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(0,122,255,.04) 0%,transparent 100%);">
+                        <div style="position:absolute;inset:0;background:radial-gradient(circle at center,rgba(0,122,255,.08),transparent 70%);"></div>
+                        <div style="position:relative;width:200px;height:200px;display:flex;align-items:center;justify-content:center;margin-bottom:32px;">
+                            <div class="orb-ring"></div>
+                            <div class="orb-ring orb-ring-2"></div>
+                            <div class="voice-orb" id="voice-orb" onclick="startLiveTest()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v1a7 7 0 01-14 0v-1M12 19v4M8 23h8"/></svg>
+                            </div>
+                        </div>
+                        <div style="text-align:center;z-index:1;margin-bottom:28px;">
+                            <p style="font-size:17px;font-weight:700;margin:0 0 6px;" id="test-display-status">Voice Link Inactive</p>
+                            <p style="font-size:13px;color:var(--text-secondary);max-width:300px;margin:0;">Click to connect live with the AI agent for testing.</p>
+                        </div>
+                        <div style="display:flex;gap:12px;z-index:1;">
+                            <button id="test-start-btn" class="btn btn-primary" onclick="startLiveTest()">Connect</button>
+                            <button id="test-stop-btn" class="btn btn-ghost" onclick="stopLiveTest()" disabled style="color:var(--danger);border-color:var(--danger);">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;flex-direction:column;gap:16px;">
+                        <div class="card" style="padding:20px;">
+                            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+                                Stream Info
+                                <span style="width:8px;height:8px;border-radius:50%;background:var(--success);"></span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:10px;">
+                                <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(0,0,0,.03);border-radius:8px;">
+                                    <span style="font-size:12px;color:var(--text-secondary);">Latency</span>
+                                    <span style="font-size:12px;font-weight:700;font-family:var(--font-mono);color:var(--primary);">~240ms</span>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(0,0,0,.03);border-radius:8px;">
+                                    <span style="font-size:12px;color:var(--text-secondary);">Codec</span>
+                                    <span style="font-size:12px;font-weight:700;font-family:var(--font-mono);color:var(--primary);">PCM L16</span>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(0,0,0,.03);border-radius:8px;">
+                                    <span style="font-size:12px;color:var(--text-secondary);">Sample Rate</span>
+                                    <span style="font-size:12px;font-weight:700;font-family:var(--font-mono);color:var(--primary);">16,000 Hz</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card" style="padding:20px;">
+                            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:14px;">Live Activity</div>
+                            <div id="test-wave" style="display:flex;align-items:center;gap:3px;height:40px;">
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                                <div class="wave-bar" style="flex:1;"></div>
+                            </div>
+                            <p style="font-size:10px;text-align:center;color:var(--text-secondary);margin:10px 0 0;text-transform:uppercase;letter-spacing:.06em;">Awaiting audio...</p>
+                        </div>
+                        <div class="card" id="test-recording-card" style="padding:20px; display:none;">
+                            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;">
+                                Test Call Recording
+                                <span class="badge" style="font-size:9px;padding:3px 8px;background:var(--success);color:#fff;">New</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;">
+                                <audio id="test-audio-player" controls style="width:100%;"></audio>
+                                <a id="test-download-link" href="#" download="voice_test_recording.wav" class="btn btn-ghost btn-sm" style="width:100%;text-align:center;">Download Recording</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── INTERESTED LEADS FEEDBACK MANAGER ── -->
+            <div id="page-feedback" class="page-section">
+                <div class="page-head-split">
+                    <div>
+                        <h2 style="font-size:clamp(1.25rem,4vw,28px);font-weight:800;letter-spacing:-.02em;margin:0;">Interested Leads Feedback Manager</h2>
+                        <p style="color:var(--text-secondary);font-size:14px;margin:6px 0 0;">Track and manage feedback for interested leads</p>
+                    </div>
+                    <div class="page-head-actions">
+                        <button class="btn btn-ghost btn-sm" onclick="loadFeedbackData()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;"><path d="M23 4v6h-6M1 20v-6h6" stroke-width="2"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" stroke-width="2"/></svg>
+                            Refresh
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="exportFeedbackCSV()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke-width="2"/></svg>
+                            Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats Cards -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:var(--space-xl);" id="feedback-stats">
+                    <div class="stat-card">
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:8px;">Total Records</div>
+                        <div style="font-size:28px;font-weight:800;color:var(--primary);" id="fb-total">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:8px;">Interested</div>
+                        <div style="font-size:28px;font-weight:800;color:var(--success);" id="fb-interested">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:8px;">Not Interested</div>
+                        <div style="font-size:28px;font-weight:800;color:var(--danger);" id="fb-not-interested">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:8px;">Callbacks</div>
+                        <div style="font-size:28px;font-weight:800;color:#CC7700;" id="fb-callback">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:8px;">No Answer</div>
+                        <div style="font-size:28px;font-weight:800;color:var(--text-secondary);" id="fb-no-answer">0</div>
+                    </div>
+                </div>
+
+                <!-- Add / Edit Form -->
+                <div class="card" style="margin-bottom:var(--space-xl);" id="feedback-form-card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-lg);">
+                        <h3 style="font-size:15px;font-weight:700;margin:0;" id="feedback-form-title">Add New Feedback</h3>
+                        <button class="btn btn-ghost btn-sm" id="feedback-cancel-btn" style="display:none;" onclick="cancelFeedbackEdit()">Cancel Edit</button>
+                    </div>
+                    <input type="hidden" id="fb-edit-id" value="">
+                    <div class="charts-grid-2" style="gap:14px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="fb-name">Name <span style="color:var(--danger);">*</span></label>
+                            <input type="text" id="fb-name" placeholder="Lead's full name" maxlength="200">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="fb-contact">Contact Number <span style="color:var(--danger);">*</span></label>
+                            <input type="text" id="fb-contact" placeholder="Phone number" maxlength="30">
+                        </div>
+                    </div>
+                    <div class="charts-grid-2" style="gap:14px;margin-top:14px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="fb-status">Lead Status <span style="color:var(--danger);">*</span></label>
+                            <select id="fb-status" onchange="toggleCustomStatus()">
+                                <option value="">Select status...</option>
+                                <option value="Interested">Interested</option>
+                                <option value="Not Interested">Not Interested</option>
+                                <option value="Callback">Callback</option>
+                                <option value="No Answer">No Answer</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;display:none;" id="fb-custom-status-group">
+                            <label for="fb-custom-status">Custom Status <span style="color:var(--danger);">*</span></label>
+                            <input type="text" id="fb-custom-status" placeholder="Enter custom status" maxlength="100">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top:14px;margin-bottom:0;">
+                        <label for="fb-notes">Feedback / Notes</label>
+                        <textarea id="fb-notes" rows="3" placeholder="Additional comments, observations, follow-up details..." maxlength="2000"></textarea>
+                    </div>
+                    <div style="margin-top:var(--space-lg);display:flex;gap:10px;">
+                        <button class="btn btn-primary" id="feedback-save-btn" onclick="saveFeedbackEntry()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px;"><line x1="12" y1="5" x2="12" y2="19" stroke-width="2"/><line x1="5" y1="12" x2="19" y2="12" stroke-width="2"/></svg>
+                            Add Entry
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search / Filter / Table -->
+                <div class="card">
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:var(--space-lg);align-items:center;">
+                        <div style="flex:1;min-width:200px;">
+                            <input type="text" id="fb-search" placeholder="Search by name or contact..." oninput="debounceFeedbackSearch()" style="width:100%;padding:10px 14px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--white);color:var(--text);">
+                        </div>
+                        <div style="min-width:160px;">
+                            <select id="fb-filter-status" onchange="loadFeedbackData()" style="width:100%;padding:10px 14px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--white);color:var(--text);">
+                                <option value="">All Statuses</option>
+                                <option value="Interested">Interested</option>
+                                <option value="Not Interested">Not Interested</option>
+                                <option value="Callback">Callback</option>
+                                <option value="No Answer">No Answer</option>
+                                <option value="Others">Others</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap" id="feedback-table-wrap">
+                        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                            <thead>
+                                <tr style="border-bottom:2px solid var(--border);">
+                                    <th style="text-align:left;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);cursor:pointer;" onclick="sortFeedback('name')">Name</th>
+                                    <th style="text-align:left;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);cursor:pointer;" onclick="sortFeedback('contact_number')">Contact</th>
+                                    <th style="text-align:left;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);cursor:pointer;" onclick="sortFeedback('lead_status')">Status</th>
+                                    <th style="text-align:left;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);">Notes</th>
+                                    <th style="text-align:left;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);cursor:pointer;" onclick="sortFeedback('created_at')">Created</th>
+                                    <th style="text-align:right;padding:10px 12px;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="feedback-table-body">
+                                <tr><td colspan="6" style="text-align:center;padding:40px 12px;color:var(--text-secondary);">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div id="feedback-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:var(--space-lg);flex-wrap:wrap;gap:10px;">
+                        <div style="font-size:12px;color:var(--text-secondary);" id="fb-page-info">Showing 0 of 0 entries</div>
+                        <div style="display:flex;gap:6px;" id="fb-page-buttons"></div>
+                    </div>
+                </div>
+            </div>
+        </div><!-- end main-content -->
+    </div><!-- end app-layout -->
+
+    <!-- ────────── MODAL: New / Edit Case ────────── -->
+    <div id="modal-case" class="modal">
+        <div class="modal-box" style="padding:24px;max-width:560px;">
+            <h3 id="case-modal-title" style="font-size:17px;font-weight:700;margin:0 0 6px;">New Case</h3>
+            <p style="font-size:12px;color:var(--text-secondary);margin:0 0 16px;">
+                Give the case a short name and the instructions you want the agent to follow when this case is active.
+            </p>
+            <input type="hidden" id="case-edit-id" value="">
+            <label
+                style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:6px;">Case
+                Name</label>
+            <input id="case-name" type="text" maxlength="120" placeholder="e.g. April Steel Sheets Push"
+                style="width:100%;padding:10px 12px;font-size:13px;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.02);color:var(--text);margin-bottom:14px;">
+            <label
+                style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary);margin-bottom:6px;">Instructions
+                for the AI</label>
+            <textarea id="case-description" rows="9"
+                placeholder="Examples:&#10;- Today's offer: 10% off CONNECT plan, Diwali special ending 30 April.&#10;- Focus on existing GMT users.&#10;- Mention free 2 RFQs to encourage trial.&#10;- If they hesitate on price, offer to schedule a follow-up demo."
+                style="width:100%;font-size:13px;line-height:1.5;border:1px solid var(--border);border-radius:10px;background:rgba(0,0,0,.02);color:var(--text);padding:12px;font-family:var(--font-mono);"></textarea>
+            <div style="display:flex;gap:10px;margin-top:18px;">
+                <button id="case-save-btn" class="btn btn-primary" onclick="submitCaseModal()" style="flex:1;">Save
+                    Case</button>
+                <button class="btn btn-ghost" onclick="closeModal('modal-case')" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────── MODAL: Total Called Breakdown ────────── -->
+    <div id="modal-total-called" class="modal" onclick="if(event.target===this)closeModal('modal-total-called')">
+        <div class="modal-box" style="max-width:420px;padding:0;overflow:hidden;" onclick="event.stopPropagation()">
+            <div style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:flex-start;">
+                <h3 style="font-size:18px;font-weight:800;margin:0;">Total Called</h3>
+                <button onclick="closeModal('modal-total-called')" style="background:none;border:none;cursor:pointer;font-size:20px;color:var(--text-secondary);padding:0 0 0 12px;line-height:1;">&times;</button>
+            </div>
+            <div style="padding:8px 24px 20px;">
+                <div id="tc-total-number" style="font-size:36px;font-weight:800;letter-spacing:-0.03em;margin:0 0 16px;">0</div>
+                <div style="display:flex;flex-direction:column;gap:0;">
+                    <div id="tc-row-total" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);">Total called</span>
+                        <span id="tc-count-total" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-answered" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#22c55e;">&#9989;</span> Answered</span>
+                        <span id="tc-count-answered" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-noanswer" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#ef4444;">&#128683;</span> No Answer</span>
+                        <span id="tc-count-noanswer" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-busy" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#ec4899;">&#128222;</span> Busy</span>
+                        <span id="tc-count-busy" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-interested" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#22c55e;">&#128100;</span> Interested</span>
+                        <span id="tc-count-interested" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-notinterested" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#ef4444;">&#10060;</span> Not Interested</span>
+                        <span id="tc-count-notinterested" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-callbacks" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#3b82f6;">&#128197;</span> Callbacks</span>
+                        <span id="tc-count-callbacks" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                    <div id="tc-row-failed" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;">
+                        <span style="font-size:14px;color:var(--text);display:flex;align-items:center;gap:6px;"><span style="color:#f59e0b;">&#9888;&#65039;</span> Failed Calls</span>
+                        <span id="tc-count-failed" style="font-size:14px;font-weight:700;">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────── MODAL: Call Detail ────────── -->
+    <!-- Re-analyze All Progress Modal -->
+    <div id="modal-reanalyze-all" class="modal">
+        <div class="modal-box" style="max-width:480px;">
+            <div style="padding:24px 28px;">
+                <div style="font-size:16px;font-weight:700;margin-bottom:8px;">Re-analyzing All Calls</div>
+                <p id="reanalyze-status" style="font-size:13px;color:var(--text-secondary);margin:0 0 16px;">Starting...</p>
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                    <div style="flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden;">
+                        <div id="reanalyze-progress-bar" style="height:100%;width:0%;background:var(--accent,#DC2626);border-radius:4px;transition:width .3s ease;"></div>
+                    </div>
+                    <span id="reanalyze-progress-text" style="font-size:12px;font-weight:600;white-space:nowrap;color:var(--text-secondary);">0 / 0</span>
+                </div>
+                <p id="reanalyze-current" style="font-size:12px;color:var(--text-secondary);margin:0 0 4px;">&nbsp;</p>
+                <div id="reanalyze-errors" style="font-size:11px;color:var(--red);max-height:100px;overflow-y:auto;margin-bottom:12px;display:none;"></div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;">
+                    <button id="btn-reanalyze-cancel" class="btn btn-ghost btn-sm" onclick="cancelReanalyzeAll()" style="display:none;">Cancel</button>
+                    <button id="btn-reanalyze-close" class="btn btn-primary btn-sm" onclick="closeModal('modal-reanalyze-all')" style="display:none;">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- ────────── MODAL: Reschedule Calls ────────── -->
+    <div id="modal-reschedule" class="modal" onclick="if(event.target===this)closeModal('modal-reschedule')">
+        <div class="modal-box" style="max-width:520px; overflow:visible;">
+            <div style="padding:24px 28px;">
+                <div style="font-size:18px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:20px;height:20px;color:var(--accent);">
+                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Reschedule Campaign Calls
+                </div>
+                <p style="font-size:13px;color:var(--text-secondary);margin:0 0 20px;">
+                    Reschedule call outcomes back to pending/callbacks for dialing on a future date.
+                </p>
+
+                <!-- Step 1: historical range -->
+                <div style="margin-bottom:16px;">
+                    <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-secondary);display:block;margin-bottom:6px;">Select Historical Calls From</label>
+                    <div style="display:flex;gap:12px;align-items:center;">
+                        <div style="flex:1;">
+                            <span style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:2px;">From Date</span>
+                            <input type="date" id="reschedule-date-from" style="width:100%;font-size:12px;padding:8px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);outline:none;">
+                        </div>
+                        <div style="flex:1;">
+                            <span style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:2px;">To Date</span>
+                            <input type="date" id="reschedule-date-to" style="width:100%;font-size:12px;padding:8px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);outline:none;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: outcome categories -->
+                <div style="margin-bottom:16px;">
+                    <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-secondary);display:block;margin-bottom:8px;">Select Outcomes to Target</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;">
+                            <input type="checkbox" id="reschedule-opt-failed" checked style="accent-color:var(--accent);">
+                            <span>Failed / No Answer</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;">
+                            <input type="checkbox" id="reschedule-opt-cut-middle" checked style="accent-color:var(--accent);">
+                            <span>Calls Cut in Middle</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;">
+                            <input type="checkbox" id="reschedule-opt-interested" style="accent-color:var(--accent);">
+                            <span>Interested</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;user-select:none;">
+                            <input type="checkbox" id="reschedule-opt-not-interested" onchange="toggleRescheduleNotInterestedWarning(this)" style="accent-color:var(--accent);">
+                            <span>Not Interested</span>
+                        </label>
+                    </div>
+
+                    <!-- Dynamic alert warning for Not Interested calls -->
+                    <div id="reschedule-warning-not-interested" style="display:none;background:rgba(220,38,38,0.08);border:1px solid var(--red);border-radius:10px;padding:12px 16px;margin-bottom:12px;animation:fadeIn 0.25s ease;">
+                        <div style="display:flex;align-items:flex-start;gap:8px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--red);flex-shrink:0;margin-top:1px;">
+                                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <div>
+                                <strong style="font-size:12px;color:var(--red);display:block;margin-bottom:2px;">Carrier Blocking Warning</strong>
+                                <span style="font-size:11px;color:var(--text);line-height:1.4;display:block;">
+                                    These prospects have said Not Interested. Calling them again might get your phone number flagged or blocked by service providers.
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: target reschedule date -->
+                <div style="margin-bottom:24px;">
+                    <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-secondary);display:block;margin-bottom:6px;">Select Reschedule Target Date & Time</label>
+                    <input type="datetime-local" id="reschedule-target-datetime" style="width:100%;font-size:12px;padding:8px 12px;border-radius:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);outline:none;">
+                </div>
+
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-reschedule')">Cancel</button>
+                    <button class="btn btn-primary btn-sm" onclick="submitRescheduleCampaign()">Confirm Reschedule</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-call" class="modal">
+        <div class="modal-box" style="max-width:760px;">
+            <div
+                style="padding:22px 26px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                <div style="flex:1;min-width:0;">
+                    <h3 id="cd-title" style="font-size:18px;font-weight:800;margin:0 0 6px;letter-spacing:-.01em;">Call
+                        Detail</h3>
+                    <p id="cd-subtitle" style="font-size:12px;color:var(--text-secondary);margin:0;"></p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-call')"
+                    style="padding:6px 12px;">Close</button>
+            </div>
+            <div style="padding:20px 26px;display:flex;flex-direction:column;gap:18px;">
+                <!-- KPIs -->
+                <div class="modal-kpi-grid">
+                    <div
+                        style="background:var(--gray-100);border:1px solid var(--border);border-radius:var(--radius-xl);padding:12px;">
+                        <div id="cd-outcome-heading"
+                            style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:6px;">
+                            Outcome</div>
+                        <p id="cd-outcome-hint"
+                            style="font-size:10px;color:var(--text-secondary);font-weight:500;line-height:1.35;margin:0 0 8px;text-transform:none;letter-spacing:0;">
+                        </p>
+                        <div id="cd-outcome" style="font-size:14px;font-weight:700;">—</div>
+                    </div>
+                    <div
+                        style="background:var(--gray-100);border:1px solid var(--border);border-radius:var(--radius-xl);padding:12px;">
+                        <div
+                            style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:6px;">
+                            Rating</div>
+                        <div id="cd-rating" style="font-size:14px;font-weight:700;">—</div>
+                    </div>
+                </div>
+
+                <!-- Dial / provider failure (classified: title + detail + severity) -->
+                <div id="cd-failure-block" class="cd-failure-block fail-sev-error" style="display:none;">
+                    <div class="cd-failure-kicker">Failure reason</div>
+                    <div id="cd-failure-category" class="cd-failure-category" style="display:none;"></div>
+                    <div id="cd-failure-title-line" class="cd-failure-title-line"></div>
+                    <p id="cd-failure-detail-line" class="cd-failure-detail-line" style="display:none;margin:0;"></p>
+                </div>
+
+                <!-- Recording -->
+                <div id="cd-recording-block" style="display:none;">
+                    <div
+                        style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:8px;">
+                        Recording</div>
+                    <audio id="cd-audio" controls style="width:100%;"></audio>
+                </div>
+
+                <!-- Summary + Next Steps -->
+                <div>
+                    <div
+                        style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:8px;">
+                        Summary <span
+                            style="font-weight:600;color:var(--text-secondary);text-transform:none;letter-spacing:0;">(from
+                            transcript)</span></div>
+                    <p id="cd-summary" style="font-size:14px;line-height:1.55;margin:0 0 12px;color:var(--text);">No
+                        summary available.</p>
+                    <div id="cd-emotion-block" style="display:none;margin-bottom:12px;">
+                        <div
+                            style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:6px;">
+                            Emotion</div>
+                        <p id="cd-emotion" style="font-size:13px;line-height:1.5;margin:0;color:var(--text-secondary);"></p>
+                    </div>
+                    <div id="cd-next-block" style="display:none;">
+                        <div
+                            style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);margin-bottom:6px;">
+                            Next Steps</div>
+                        <p id="cd-next" style="font-size:13px;line-height:1.5;margin:0;color:var(--text-secondary);">
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Transcript -->
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <span
+                            style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-secondary);">Transcript
+                            <span style="font-weight:600;text-transform:none;letter-spacing:0;">(outcome is based on
+                                this)</span></span>
+                        <button id="cd-reanalyze" class="btn btn-ghost btn-sm" onclick="reanalyzeCall()"
+                            style="font-size:11px;padding:6px 12px;">Re-analyze</button>
+                    </div>
+                    <div id="cd-transcript"
+                        style="max-height:340px;overflow-y:auto;background:rgba(0,0,0,.03);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;">
+                        <p style="font-size:12px;color:var(--text-secondary);text-align:center;margin:20px 0;">Loading
+                            transcript…</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: New Agent (removed - single role) -->
+
+    <div id="toast-host" aria-live="polite" aria-atomic="false"></div>
+
+    <style>
+        .star {
+            color: var(--border);
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        .star.on {
+            color: var(--primary);
+        }
+
+        .bubble {
+            padding: 10px 14px;
+            border-radius: 14px;
+            max-width: 78%;
+            font-size: 13px;
+            line-height: 1.45;
+            word-wrap: break-word;
+        }
+
+        .bubble.user {
+            background: rgba(0, 122, 255, .12);
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .bubble.assistant {
+            background: rgba(0, 0, 0, .06);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        body.light-mode .bubble.assistant {
+            background: rgba(0, 0, 0, .05);
+        }
+
+        .bubble-meta {
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            color: var(--text-secondary);
+            margin-bottom: 2px;
+        }
+
+        .clickable-row {
+            cursor: pointer;
+        }
+
+        .clickable-row:hover td {
+            background: rgba(0, 122, 255, .06) !important;
+        }
+
+        /* Inline toasts — campaign start/stop feedback */
+        #toast-host {
+            position: fixed;
+            bottom: max(24px, env(safe-area-inset-bottom, 0px));
+            right: max(24px, env(safe-area-inset-right, 0px));
+            left: auto;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+            max-width: min(420px, calc(100vw - 48px));
+        }
+
+        .vernika-toast {
+            pointer-events: auto;
+            padding: 14px 18px;
+            border-radius: 14px;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.45;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, .28);
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--text);
+            animation: toastIn 0.32s ease forwards;
+        }
+
+        .vernika-toast.success {
+            border-color: rgba(52, 199, 89, .45);
+            background: rgba(52, 199, 89, .14);
+        }
+
+        .vernika-toast.error {
+            border-color: rgba(255, 59, 48, .45);
+            background: rgba(255, 59, 48, .12);
+        }
+
+        .vernika-toast.info {
+            border-color: rgba(0, 122, 255, .35);
+            background: rgba(0, 122, 255, .1);
+        }
+
+        @keyframes toastIn {
+            from {
+                opacity: 0;
+                transform: translateY(14px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .vernika-modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 12000;
+            background: rgba(0, 0, 0, .45);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .vernika-modal {
+            width: min(640px, 100%);
+            max-height: min(88vh, 900px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border-radius: 14px;
+            border: 1px solid rgba(0, 0, 0, .08);
+            background: #ffffff;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+        }
+
+        .vernika-modal-head {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(0, 0, 0, .06);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            background: #ffffff;
+        }
+
+        .vernika-modal-body {
+            padding: 16px 20px;
+            overflow-y: auto;
+            font-size: 13px;
+            line-height: 1.5;
+            background: #ffffff;
+        }
+
+        .manual-recent-strip {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .manual-recent-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0, 0, 0, .06);
+            font-size: 12px;
+        }
+
+        .manual-recent-row:last-child {
+            border-bottom: none;
+        }
+    </style>
+
+    <div id="manual-call-modal" class="modal" onclick="if(event.target===this)closeManualCallModal()">
+        <div class="modal-box" style="max-width:820px; max-height:90vh; overflow-y:auto; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.4); box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.18); border-radius: 20px; padding: 0;" onclick="event.stopPropagation()">
+            <!-- Header -->
+            <div style="padding: 24px 32px 20px; background: linear-gradient(180deg, rgba(248,250,252,0.8) 0%, rgba(255,255,255,0) 100%); border-bottom: 1px solid rgba(0,0,0,0.04); display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+                <div style="flex:1; min-width:0;">
+                    <h3 id="manual-call-modal-title" style="font-size: 22px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.02em; color: #0f172a;">Call Outcome</h3>
+                    <p id="manual-call-modal-sub" style="font-size: 13px; color: #64748b; margin: 0; font-weight: 500;"></p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="closeManualCallModal()" style="padding: 8px 12px; border-radius: 8px; background: rgba(0,0,0,0.03); color: #475569;">Close</button>
+            </div>
+
+            <div style="padding: 24px 32px 32px; display: flex; flex-direction: column; gap: 24px;">
+                
+                <!-- Share of Voice Graph Block -->
+                <div id="manual-call-modal-graph-container" style="display:none; background: #f8fafc; border-radius: 12px; padding: 16px; border: 1px solid #e2e8f0;">
+                    <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-8"></path><path d="M6 20V16"></path><path d="M18 20V4"></path></svg>
+                            Share of Voice (Talk Time)
+                        </span>
+                        <div style="display:flex; gap: 12px; font-size: 10px; font-weight: 600;">
+                            <span style="color:#2563eb; display:flex; align-items:center; gap:4px;"><div style="width:8px;height:8px;border-radius:2px;background:#3b82f6;"></div> Assistant</span>
+                            <span style="color:#16a34a; display:flex; align-items:center; gap:4px;"><div style="width:8px;height:8px;border-radius:2px;background:#22c55e;"></div> Prospect</span>
+                        </div>
+                    </div>
+                    <!-- Stacked bar -->
+                    <div style="width: 100%; height: 16px; border-radius: 8px; background: #e2e8f0; display: flex; overflow: hidden; margin-bottom: 8px;">
+                        <div id="manual-graph-bar-assistant" style="height: 100%; background: #3b82f6; width: 0%; transition: width 0.5s ease-out;"></div>
+                        <div id="manual-graph-bar-user" style="height: 100%; background: #22c55e; width: 0%; transition: width 0.5s ease-out;"></div>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b; font-weight: 500;">
+                        <span id="manual-graph-pct-assistant">0%</span>
+                        <span id="manual-graph-pct-user">0%</span>
+                    </div>
+                </div>
+
+                <!-- Recording -->
+                <div id="manual-call-recording-row" style="display:none; background: #f8fafc; border-radius: 12px; padding: 16px; border: 1px solid #e2e8f0;">
+                    <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                        Call Recording
+                    </div>
+                    <audio id="manual-call-modal-audio" controls preload="metadata" playsinline style="width: 100%; height: 40px; outline: none; border-radius: 8px; display:none;"></audio>
+                    <p id="manual-call-recording-msg" style="margin: 8px 0 0; font-size: 12px; color: #64748b; display: none;"></p>
+                </div>
+
+                <!-- Manual Disposition (Interested / Not Interested) -->
+                <div id="manual-call-disposition-block" style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
+                    <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                        Call Outcome
+                    </div>
+                    <div id="manual-call-disposition-buttons" style="display: flex; gap: 12px; flex-wrap: wrap;">
+                        <button id="manual-call-btn-interested" type="button" class="btn btn-primary" onclick="manualCallSetDisposition('Interested')" style="flex: 1; min-width: 160px; height: 44px; background: #22c55e; border-color: #22c55e; color: white; font-weight: 700; border-radius: 10px;">
+                            Interested — Send WhatsApp
+                        </button>
+                        <button id="manual-call-btn-not-interested" type="button" class="btn btn-ghost" onclick="manualCallSetDisposition('Not Interested')" style="flex: 1; min-width: 160px; height: 44px; border: 1px solid #e2e8f0; color: #64748b; font-weight: 600; border-radius: 10px;">
+                            Not Interested
+                        </button>
+                    </div>
+                    <div id="manual-call-disposition-status" style="margin-top: 12px; font-size: 13px; font-weight: 600; display: none;"></div>
+                </div>
+
+                <!-- Summary & AI Insights -->
+                <div style="display: flex; gap: 24px;">
+                    <div style="flex: 1;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                            Call Summary
+                        </div>
+                        <p id="manual-call-modal-summary" style="font-size: 14px; line-height: 1.6; margin: 0; color: #334155;"></p>
+                    </div>
+
+                    <div id="manual-call-next-action-container" style="flex: 1; display: none;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                            Suggested Action
+                        </div>
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                <div id="manual-call-next-action-badge"></div>
+                                <div id="manual-call-next-action-time" style="font-size: 12px; font-weight: 600; color: #64748b;"></div>
+                            </div>
+                            <p id="manual-call-next-action-details" style="font-size: 13px; line-height: 1.5; margin: 0; color: #475569;"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Emotion, Rating & Recommended Actions -->
+                <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    <div id="manual-call-modal-emotion-block" style="flex: 1; min-width: 240px; display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+                            Emotion
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                            <span id="manual-call-modal-emotion" style="font-size: 13px; font-weight: 700; color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0; padding: 4px 10px; border-radius: 999px;"></span>
+                            <span id="manual-call-modal-emotion-confidence" style="font-size: 11px; color: #64748b; font-weight: 600;"></span>
+                        </div>
+                        <p id="manual-call-modal-emotion-rationale" style="font-size: 12px; line-height: 1.5; margin: 0; color: #475569;"></p>
+                    </div>
+
+                    <div id="manual-call-modal-rating-block" style="flex: 0 0 auto; min-width: 200px; display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                            QA Rating
+                        </div>
+                        <div id="manual-call-modal-rating" style="font-size: 22px; font-weight: 800; color: #0f172a;"></div>
+                    </div>
+                </div>
+
+                <div id="manual-call-modal-actions-block" style="display: none; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
+                    <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                        Recommended Actions
+                    </div>
+                    <ul id="manual-call-modal-actions" style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: #334155;"></ul>
+                </div>
+
+                <!-- Transcript -->
+                <div style="margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                            Transcript
+                        </div>
+                        <button id="manual-call-reanalyze-btn" type="button" class="btn btn-ghost btn-sm" onclick="manualCallModalReanalyze()" style="font-size: 11px; padding: 6px 12px; border-radius: 6px; background: rgba(59,130,246,0.1); color: #2563eb; font-weight: 600;">Re-analyze Call</button>
+                    </div>
+                    <pre id="manual-call-modal-transcript" style="max-height: 380px; overflow-y: auto; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 20px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────────── MODAL: Campaign Start / Schedule ────────── -->
+    <div id="modal-campaign-start" class="modal" style="z-index:1100;">
+        <div class="modal-box" style="max-width:520px;padding:var(--space-2xl);">
+            <h3 style="font-size:18px;font-weight:800;margin:0 0 var(--space-lg);letter-spacing:-.02em;">Leads Uploaded</h3>
+            <p style="font-size:14px;color:var(--text-secondary);margin:0 0 var(--space-2xl);line-height:1.5;">
+                Your leads are ready. Start calling now or schedule the campaign for later.
+            </p>
+
+            <div class="form-group">
+                <label for="campaign-start-label">Campaign Label</label>
+                <input type="text" id="campaign-start-label" placeholder="e.g. Friday morning blast" maxlength="120">
+            </div>
+
+            <div style="display:flex;gap:var(--space-md);margin-bottom:var(--space-lg);">
+                <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-sm);">
+                    <label for="campaign-start-datetime">Start At</label>
+                    <input type="datetime-local" id="campaign-start-datetime" step="60">
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-sm);">
+                    <label for="campaign-stop-datetime">Stop At <span style="color:var(--text-tertiary);font-weight:500;text-transform:none;letter-spacing:0;">(optional)</span></label>
+                    <input type="datetime-local" id="campaign-stop-datetime" step="60">
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);">
+                <button class="btn btn-primary" onclick="startCampaignFromModal()" style="height:44px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;">
+                        <polygon points="5 3 19 12 5 21 5 3" stroke-width="2"/>
+                    </svg>
+                    Start Now
+                </button>
+                <button class="btn btn-secondary" onclick="scheduleCampaignFromModal()" style="height:44px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:16px;height:16px;">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" stroke-width="2"/>
+                        <line x1="16" y1="2" x2="16" y2="6" stroke-width="2"/>
+                        <line x1="8" y1="2" x2="8" y2="6" stroke-width="2"/>
+                        <line x1="3" y1="10" x2="21" y2="10" stroke-width="2"/>
+                    </svg>
+                    Schedule
+                </button>
+            </div>
+            <button class="btn btn-ghost btn-block" onclick="closeModal('modal-campaign-start')" style="margin-top:var(--space-sm);height:40px;">Not now</button>
+        </div>
+    </div>
+
+    <!-- Modular JavaScript -->
+    <script src="/static/js/api_utils.js?v=39"></script>
+    <script src="/static/js/charts.js?v=32"></script>
+    <script src="/static/js/campaign.js?v=38"></script>
+    <script src="/static/js/voice.js?v=32"></script>
+    <script src="/static/js/restored.js?v=36"></script>
+    <script src="/static/js/campaign_cases.js?v=24"></script>
+    <script src="/static/js/greeting_audio.js?v=24"></script>
+    <script src="/static/js/leads_feedback.js?v=1"></script>
+    <script src="/static/js/app.js?v=38"></script>
+
+    <script>console.log('Data Edge Console Initialized');</script>
+</body>
+
+</html>

@@ -1,0 +1,4 @@
+id,name,phone,email,company,status,disposition,summary,called_at_iso,log_id
+15009,Mayank,+919825229475,info@lmpl-india.com,LILANAND MAGNESITES PVT. LTD.,completed,Interested,"The assistant introduced themselves, but the user immediately asked for the purpose of the call.",2026-06-03T09:55:59.119397Z,camp-4b01fe93-d73-20260603T09561
+14998,SATYA,+919342445513,info@lalithaenterprises.com,LALITHA ENTERPRISES,completed,Interested,The assistant introduced herself and confirmed with the user that it was a good time to speak.,2026-06-03T09:21:12.352517Z,camp-d292df91-1cb-20260603T09213
+14983,Rajinder,+919810291381,info@krmcorporation.com,KRM Corporation,completed,Interested,"The assistant introduced themselves and attempted to ask a question in Hindi, but the conversation was extremely brief and remained incomplete.",2026-06-03T08:33:26.477932Z,camp-21ebe933-dbc-20260603T08334

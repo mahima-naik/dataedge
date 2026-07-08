@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <title>Vernika Pro | Agent Factory</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+<div id="sidebar-backdrop" class="sidebar-backdrop" onclick="closeMobileSidebar()" aria-hidden="true"></div>
+<div class="app-layout" id="app-shell">
+    <aside class="sidebar" id="app-sidebar" aria-label="Factory navigation">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">V</div>
+            <div>
+                <div class="sidebar-title">Vernika Pro</div>
+                <p class="text-small text-muted mb-0" style="margin-top: 2px;">Agent Factory</p>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-label">Management</div>
+                <div class="nav-item active" onclick="showPageNav('overview', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>Overview</span>
+                </div>
+                <div class="nav-item" onclick="showPageNav('agents', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87"></path><path d="M16 3.13a4 4 0 010 7.75"></path></svg>
+                    <span>Agent Registry</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label">Engineering</div>
+                <div class="nav-item" onclick="showPageNav('prompts', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                    <span>Prompt Lab</span>
+                </div>
+                <div class="nav-item" onclick="showPageNav('knowledge', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 006.5 22H20M4 19.5V3a2.5 2.5 0 012.5-2.5H20"></path></svg>
+                    <span>Knowledge Base</span>
+                </div>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-label">Testing</div>
+                <div class="nav-item" onclick="showPageNav('testing', this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"></path><path d="M19 10v1a7 7 0 01-14 0v-1M12 19v4M8 23h8"></path></svg>
+                    <span>Test Harness</span>
+                </div>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="theme-section">
+                <span class="text-small">Theme</span>
+                <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme"></button>
+            </div>
+
+            <div class="vp-sidebar-note">
+                <p class="vp-sidebar-note-title">Admin Access</p>
+                <p class="vp-sidebar-note-caption">v1.0 Active</p>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-content">
+        <header class="mobile-toolbar">
+            <button type="button" class="mobile-menu-btn" id="menu-toggle" onclick="toggleMobileSidebar(event)" aria-label="Open navigation menu" aria-expanded="false" aria-controls="app-sidebar">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <span class="mobile-toolbar-title">Agent Factory</span>
+        </header>
+
+        <div id="page-overview" class="page-section active">
+            <div class="vp-banner vp-banner--dual">
+                <h2 class="vp-banner-title">Agent Factory</h2>
+                <p class="vp-banner-text">Advanced configuration and management interface for all AI agents in the system</p>
+            </div>
+
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">System Overview</h1>
+                <p class="vp-page-sub">Manage agents, prompts, knowledge bases, and system configuration</p>
+            </div>
+
+            <div class="vp-stat-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Agents</div>
+                    <div class="stat-value" id="stat-agents">3</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Sessions</div>
+                    <div class="stat-value" style="color: var(--success);" id="stat-sessions">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">System Health</div>
+                    <div class="stat-value" style="color: var(--success);">100%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Uptime</div>
+                    <div class="stat-value" style="color: var(--info);">99.9%</div>
+                </div>
+            </div>
+
+            <div class="card mb-3xl">
+                <div class="card-header">
+                    <h3 class="card-title">Available Agents</h3>
+                    <p class="card-subtitle">Pre-configured personas</p>
+                </div>
+
+                <div class="agent-preview">
+                    <div class="agent-card">
+                        <div class="agent-icon">👨‍💼</div>
+                        <h4 class="agent-name">Sellers Agent</h4>
+                        <span class="badge badge-primary agent-status">Active</span>
+                        <p class="text-small text-muted">Sales-focused AI with closing expertise</p>
+                        <button class="btn btn-ghost btn-sm btn-block mt-lg" onclick="alert('Editing Sellers Agent...')">Configure</button>
+                    </div>
+
+                    <div class="agent-card">
+                        <div class="agent-icon">📊</div>
+                        <h4 class="agent-name">Buyers Agent</h4>
+                        <span class="badge badge-success agent-status">Active</span>
+                        <p class="text-small text-muted">Procurement and sourcing specialist</p>
+                        <button class="btn btn-ghost btn-sm btn-block mt-lg" onclick="alert('Editing Buyers Agent...')">Configure</button>
+                    </div>
+
+                    <div class="agent-card">
+                        <div class="agent-icon">📋</div>
+                        <h4 class="agent-name">RFQs Agent</h4>
+                        <span class="badge badge-warning agent-status">Active</span>
+                        <p class="text-small text-muted">RFQ processing and coordination</p>
+                        <button class="btn btn-ghost btn-sm btn-block mt-lg" onclick="alert('Editing RFQs Agent...')">Configure</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">System Configuration</h3>
+                    <p class="card-subtitle">Core settings and integrations</p>
+                </div>
+
+                <div style="display: grid; gap: var(--space-lg);">
+                    <div style="padding: var(--space-lg); background: var(--bg-secondary); border-radius: var(--radius-md); border-left: 3px solid var(--primary);">
+                        <h4 style="margin: 0 0 var(--space-sm); font-size: var(--text-base); font-weight: 700;">Vobiz Telephony Integration</h4>
+                        <p class="text-small text-muted" style="margin: 0;">PSTN gateway for outbound calling. Per-role accounts configured.</p>
+                        <button class="btn btn-ghost btn-sm mt-lg" onclick="alert('Vobiz Settings')">Configure</button>
+                    </div>
+
+                    <div style="padding: var(--space-lg); background: var(--bg-secondary); border-radius: var(--radius-md); border-left: 3px solid var(--success);">
+                        <h4 style="margin: 0 0 var(--space-sm); font-size: var(--text-base); font-weight: 700;">Google Gemini Integration</h4>
+                        <p class="text-small text-muted" style="margin: 0;">Real-time speech synthesis and understanding for low-latency interactions.</p>
+                        <button class="btn btn-ghost btn-sm mt-lg" onclick="alert('Gemini Settings')">Configure</button>
+                    </div>
+
+                    <div style="padding: var(--space-lg); background: var(--bg-secondary); border-radius: var(--radius-md); border-left: 3px solid var(--warning);">
+                        <h4 style="margin: 0 0 var(--space-sm); font-size: var(--text-base); font-weight: 700;">Authentication & Security</h4>
+                        <p class="text-small text-muted" style="margin: 0;">JWT tokens, role-based access control, encryption settings.</p>
+                        <button class="btn btn-ghost btn-sm mt-lg" onclick="alert('Security Settings')">Configure</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="page-agents" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Agent Registry</h1>
+                <p class="vp-page-sub">List of all configured AI agents in the system</p>
+            </div>
+
+            <div class="card">
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Config</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Sellers Agent</strong></td>
+                                <td><span class="badge badge-primary">Sales</span></td>
+                                <td><span class="badge badge-success">Active</span></td>
+                                <td>Custom Prompt + RAG</td>
+                                <td><button class="btn btn-ghost btn-sm" onclick="alert('Edit Sellers')">Edit</button></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Buyers Agent</strong></td>
+                                <td><span class="badge badge-success">Procurement</span></td>
+                                <td><span class="badge badge-success">Active</span></td>
+                                <td>Custom Prompt + RAG</td>
+                                <td><button class="btn btn-ghost btn-sm" onclick="alert('Edit Buyers')">Edit</button></td>
+                            </tr>
+                            <tr>
+                                <td><strong>RFQs Agent</strong></td>
+                                <td><span class="badge badge-warning">RFQ</span></td>
+                                <td><span class="badge badge-success">Active</span></td>
+                                <td>Custom Prompt + RAG</td>
+                                <td><button class="btn btn-ghost btn-sm" onclick="alert('Edit RFQs')">Edit</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="page-prompts" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Prompt Lab</h1>
+                <p class="vp-page-sub">Edit and test system prompts for each agent</p>
+            </div>
+
+            <div class="form-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Sellers Prompt</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter prompt..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('Sellers prompt saved')">Save Prompt</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Buyers Prompt</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter prompt..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('Buyers prompt saved')">Save Prompt</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">RFQs Prompt</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter prompt..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('RFQs prompt saved')">Save Prompt</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="page-knowledge" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Knowledge Base</h1>
+                <p class="vp-page-sub">Manage RAG (Retrieval-Augmented Generation) knowledge sources</p>
+            </div>
+
+            <div class="form-section">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Sellers Knowledge Base</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter business knowledge..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('Sellers KB saved')">Save Knowledge</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Buyers Knowledge Base</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter business knowledge..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('Buyers KB saved')">Save Knowledge</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">RFQs Knowledge Base</h3>
+                    </div>
+                    <textarea style="min-height: 300px; font-family: var(--font-mono);" placeholder="Enter business knowledge..."></textarea>
+                    <button class="btn btn-primary btn-sm btn-block mt-lg" onclick="alert('RFQs KB saved')">Save Knowledge</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="page-testing" class="page-section">
+            <div class="vp-page-header">
+                <h1 class="vp-page-title">Test Harness</h1>
+                <p class="vp-page-sub">Debug and validate agent behavior</p>
+            </div>
+
+            <div class="grid grid-2 gap-xl">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Test Configuration</h3>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Agent</label>
+                        <select>
+                            <option>Sellers</option>
+                            <option>Buyers</option>
+                            <option>RFQs</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Test Input</label>
+                        <textarea placeholder="Enter test message..."></textarea>
+                    </div>
+
+                    <button class="btn btn-primary btn-lg btn-block" onclick="alert('Running test...')">Run Test</button>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 class="card-title">Test Results</h3>
+                    </div>
+
+                    <div style="min-height: 300px; padding: var(--space-lg); background: var(--bg-secondary); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); overflow-y: auto;">
+                        <p>Ready for testing...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    if (localStorage.getItem('theme') === 'light') {
+        document.body.classList.add('light-mode');
+    }
+
+    function closeMobileSidebar() {
+        const shell = document.getElementById('app-shell');
+        const backdrop = document.getElementById('sidebar-backdrop');
+        const btn = document.getElementById('menu-toggle');
+        if (shell) shell.classList.remove('sidebar-open');
+        if (backdrop) backdrop.classList.remove('visible');
+        document.body.classList.remove('nav-drawer-open');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleMobileSidebar(ev) {
+        if (ev) ev.stopPropagation();
+        const shell = document.getElementById('app-shell');
+        if (!shell) return;
+        const open = !shell.classList.contains('sidebar-open');
+        shell.classList.toggle('sidebar-open', open);
+        const backdrop = document.getElementById('sidebar-backdrop');
+        const btn = document.getElementById('menu-toggle');
+        if (backdrop) backdrop.classList.toggle('visible', open);
+        document.body.classList.toggle('nav-drawer-open', open);
+        if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function showPageNav(pageId, navEl) {
+        showPage(pageId, navEl);
+        closeMobileSidebar();
+    }
+
+    function showPage(pageId, navEl) {
+        document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+        const page = document.getElementById('page-' + pageId);
+        if (page) page.classList.add('active');
+        document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+        if (navEl) navEl.classList.add('active');
+    }
+
+    function toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        localStorage.setItem('theme', document.body.classList.contains('light-mode') ? 'light' : 'dark');
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeMobileSidebar();
+    });
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 900) closeMobileSidebar();
+    });
+</script>
+</body>
+</html>

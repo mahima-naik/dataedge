@@ -1,0 +1,144 @@
+"""PCM helpers, optional background decode, and pacing outbound ``playAudio`` frames."""
+
+from __future__ import annotations
+
+import audioop
+import base64
+import json
+from typing import Optional
+
+import numpy as np
+from fastapi import WebSocket
+from loguru import logger
+
+from .constants import OUT_CHUNK_BYTES, VOBIZ_CONTENT_TYPE, VOBIZ_SR
+
+try:
+    import miniaudio
+except ImportError:
+    miniaudio = None
+
+from services.call_recording import CallRecorder
+
+
+def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
+    """Resample 24kHz mono s16le PCM to 16kHz using NumPy linear interpolation.
+
+    The 24kHz→16kHz conversion is an exact 2:3 ratio — for every 3 input samples
+    we produce 2 output samples. This is ~3-5x faster than audioop.ratecv() for
+    this specific ratio and produces comparable audio quality for telephony.
+    ``state`` is unused (kept for API compatibility with audioop.ratecv callers).
+    """
+    if len(pcm_24k) < 2:
+        return pcm_24k, state
+    samples_in = np.frombuffer(pcm_24k, dtype=np.int16)
+    n_in = len(samples_in)
+    n_out = int(n_in * 2 / 3)
+    if n_out < 1:
+        return pcm_24k, state
+    src_idx = np.linspace(0, n_in - 1, n_out, endpoint=True)
+    resampled = np.interp(src_idx, np.arange(n_in), samples_in.astype(np.float32))
+    return resampled.astype(np.int16).tobytes(), state
+
+
+def load_background_audio(path: str, target_sr: int = 16000) -> Optional[np.ndarray]:
+    if miniaudio is None or not path or not __import__("os").path.exists(path):
+        return None
+    try:
+        decoded = miniaudio.decode_file(path, sample_rate=target_sr, nchannels=1)
+        return np.frombuffer(decoded.samples, dtype=np.int16)
+    except Exception as e:
+        logger.error(f"Failed to load background audio: {e}")
+        return None
+
+
+def pcm_rms_norm(pcm: np.ndarray) -> float:
+    if pcm.size == 0:
+        return 0.0
+    x = pcm.astype(np.float32) / 32768.0
+    return float(np.sqrt(np.mean(np.square(x))))
+
+
+def pcm_resample(pcm_bytes: bytes, in_sr: int, out_sr: int) -> bytes:
+    if in_sr == out_sr:
+        return pcm_bytes
+    out, _ = audioop.ratecv(pcm_bytes, 2, 1, in_sr, out_sr, None)
+    return out
+
+
+def mix_voice_and_background_tick(
+    voice_pcm16: bytes,
+    bg_wave: Optional[np.ndarray],
+    volume: float,
+    bg_position: int,
+    chunk_samples: int,
+) -> tuple[bytes, int]:
+    """One 16-bit mono tick: blend outbound voice with a looped bed (scripted PCM or Gemini).
+
+    ``volume`` scales the bed linearly on float samples before clipping (e.g. 0.75 ≈ 75 %).
+    """
+    chunk_bytes = chunk_samples * 2
+    bg_pcm = None
+    vol = float(volume)
+    if vol < 0.0:
+        vol = 0.0
+    if bg_wave is not None and vol > 0:
+        end_pos = bg_position + chunk_samples
+        if end_pos > len(bg_wave):
+            part1 = bg_wave[bg_position:]
+            part2 = bg_wave[: end_pos - len(bg_wave)]
+            bg_chunk = np.concatenate((part1, part2))
+            bg_position = end_pos - len(bg_wave)
+        else:
+            bg_chunk = bg_wave[bg_position:end_pos]
+            bg_position = end_pos
+
+        bg_chunk = (bg_chunk.astype(np.float32) * vol).clip(-32768, 32767).astype(np.int16)
+        bg_pcm = bg_chunk.tobytes()
+
+    if bg_pcm is None:
+        return voice_pcm16, bg_position
+    if not voice_pcm16:
+        return bg_pcm, bg_position
+    mixed = audioop.add(voice_pcm16, bg_pcm, 2)
+    return mixed, bg_position
+
+
+def pop_l16_chunk(queue: bytearray, chunk_bytes: int) -> bytes:
+    if len(queue) >= chunk_bytes:
+        out = bytes(queue[:chunk_bytes])
+        del queue[:chunk_bytes]
+        return out
+    if len(queue) > 0:
+        n = len(queue)
+        out = bytes(queue) + b"\x00" * (chunk_bytes - n)
+        queue.clear()
+        return out
+    return b"\x00" * chunk_bytes
+
+
+async def send_play_audio(
+    ws: WebSocket,
+    pcm16_bytes: bytes,
+    sr: int = VOBIZ_SR,
+    *,
+    call_recorder: Optional[CallRecorder] = None,
+) -> None:
+    if not pcm16_bytes:
+        return
+    if call_recorder is not None:
+        call_recorder.add_outbound(pcm16_bytes)
+    view = memoryview(pcm16_bytes)
+    for offset in range(0, len(view), OUT_CHUNK_BYTES):
+        chunk = bytes(view[offset : offset + OUT_CHUNK_BYTES])
+        if len(chunk) < 2:
+            continue
+        msg = {
+            "event": "playAudio",
+            "media": {
+                "contentType": VOBIZ_CONTENT_TYPE,
+                "sampleRate": sr,
+                "payload": base64.b64encode(chunk).decode("ascii"),
+            },
+        }
+        await ws.send_text(json.dumps(msg))

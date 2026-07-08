@@ -1,0 +1,65 @@
+# Secrets — NEVER commit these
+.env
+.env.*
+scratch/google_calendar.env.snippet
+scratch/client_secret*.json
+**/client_secret*.json
+whatsapp-proxy/whatsapp-session/
+whatsapp-proxy/node_modules/
+*.secret
+*.pem
+*.key
+*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+.venv-*/
+venv*/
+.venv*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database & data
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+backend/sandbox/agents.json
+backend/data/rag.db
+
+# Logs & recordings
+*.log
+logs/
+backend/data/call_recordings/
+backend/data/conversation_logs/
+
+# Temp files
+*.tmp
+*.bak
+*.pid
+
+# Node (if frontend ever uses it)
+node_modules/
+npm-debug.log*

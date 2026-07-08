@@ -1,0 +1,35 @@
+# Git / IDE
+.git
+.gitignore
+.cursor
+*.code-workspace
+
+# Local Python
+venv
+venv311
+.venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Secrets (inject via compose/env, not image layers)
+.env
+.env.*
+!.env.example
+
+# Heavy / irrelevant in image
+historical_transcripts
+exports
+audio_greetings
+recordings
+**/node_modules
+
+# Docs (optional; keep image small)
+*.md
+!README.md
+
+# Logs
+*.log
+logs
