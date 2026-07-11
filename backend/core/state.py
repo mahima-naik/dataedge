@@ -103,20 +103,36 @@ def try_recover_stale_vobiz_slot(role: str) -> bool:
     # Scan _CAMPAIGN_DATA for entries belonging to this role
     now = time.time()
     stale_camp_id = None
+    found_any_for_role = False
     for cid, cdata in list(_CAMPAIGN_DATA.items()):
         if not isinstance(cdata, dict):
             continue
         if cdata.get("_role") != r:
             continue
+        found_any_for_role = True
         # Only consider manual-call entries for stale recovery
         if not cdata.get("_manual_leg"):
             logger.debug("try_recover_stale: camp_id={} is not a manual leg — skipping", cid)
             continue
         connected = cdata.get("_call_connected_at")
-        if connected is not None:
-            # This campaign has a live WS — slot is legitimately active
+        ended = cdata.get("_call_ended_at")
+        if connected is not None and ended is None:
+            # This campaign has a live WS — check if it's been connected too long (stale)
+            age_since_connect = now - connected if isinstance(connected, (int, float)) else 0
+            if age_since_connect > 120:  # 2 minutes — call should have ended
+                logger.warning(
+                    "try_recover_stale: camp_id={} connected {:.0f}s ago (>120s) — treating as stale",
+                    cid, age_since_connect,
+                )
+                stale_camp_id = cid
+                break
             logger.debug("try_recover_stale: camp_id={} has _call_connected_at — slot valid", cid)
             return False
+        if connected is not None and ended is not None:
+            # Call already ended but _call_connected_at wasn't cleaned up — treat as stale
+            logger.debug("try_recover_stale: camp_id={} has _call_connected_at but also _call_ended_at — stale", cid)
+            stale_camp_id = cid
+            break
 
         # No connection — check if the entry has been around long enough to be stale
         started = cdata.get("_inserted_at") or cdata.get("started_at") or 0
@@ -132,6 +148,15 @@ def try_recover_stale_vobiz_slot(role: str) -> bool:
         )
         release_vobiz_call_slot(r)
         _CAMPAIGN_DATA.pop(stale_camp_id, None)
+        return True
+
+    # Fallback: counter says active but no campaign data found at all for this role — slot is definitely stale
+    if not found_any_for_role:
+        logger.warning(
+            "try_recover_stale: role={} counter={} but no campaign data found — releasing stale slot",
+            r, cur,
+        )
+        release_vobiz_call_slot(r)
         return True
 
     return False

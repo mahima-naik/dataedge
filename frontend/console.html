@@ -850,6 +850,7 @@ let liveProcessor = null;
 let liveMicrophone = null;
 let liveNextPlayTime = 0;
 let liveActiveSources = [];
+const JITTER_BUFFER_MS = 100;
 
 function resampleTo16k(inputData, fromSampleRate) {
     if (fromSampleRate === 16000) {
@@ -2607,11 +2608,7 @@ function playLiveResponse(base64) {
 
     const now = liveAudioContext.currentTime;
     if (liveNextPlayTime < now) {
-        if (now - liveNextPlayTime > 0.1) {
-            liveNextPlayTime = now + 0.06; // 60ms startup pre-buffer to prevent underflow gaps
-        } else {
-            liveNextPlayTime = now + 0.04; // 40ms tiny gap for minor catch-up
-        }
+        liveNextPlayTime = now + JITTER_BUFFER_MS / 1000;
     }
 
     const source = liveAudioContext.createBufferSource();

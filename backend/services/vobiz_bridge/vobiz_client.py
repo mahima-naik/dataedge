@@ -52,11 +52,19 @@ def extract_vobiz_start_numbers(start: dict) -> tuple[str, str]:
     return from_num, to_num
 
 
-def build_answer_xml(wss_stream_url: str, inbound: bool = False) -> str:
+def build_answer_xml(
+    wss_stream_url: str,
+    inbound: bool = False,
+    status_callback_url: Optional[str] = None,
+) -> str:
     del inbound  # routing is encoded in the WSS query string
     # ``&`` in query strings MUST be escaped in XML text — bare ``&manual_role`` breaks parsers and Vobiz never connects WS.
     # NOTE: audioTrack attribute removed - Vobiz docs state it should NOT be used with bidirectional="true"
     safe_url = escape(wss_stream_url, entities={'"': "&quot;", "'": "&apos;"})
+    safe_status_url = ""
+    if status_callback_url:
+        safe_status_url = escape(status_callback_url, entities={'"': "&quot;", "'": "&apos;"})
+    status_attr = f'statusCallbackUrl="{safe_status_url}" statusCallbackMethod="POST"' if safe_status_url else ""
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<Response>'
@@ -64,7 +72,9 @@ def build_answer_xml(wss_stream_url: str, inbound: bool = False) -> str:
         'bidirectional="true" '
         'keepCallAlive="true" '
         f'contentType="{VOBIZ_CONTENT_TYPE};rate={VOBIZ_SR}" '
-        'streamTimeout="3600">'
+        'streamTimeout="3600"'
+        f' {status_attr}'
+        '>'
         f'{safe_url}'
         '</Stream>'
         '</Response>'
@@ -105,8 +115,12 @@ async def make_vobiz_call(
         "X-Auth-Token": auth_token,
         "Content-Type": "application/json",
     }
+    # Vobiz API expects E.164 WITHOUT the leading '+' for the 'from' field.
+    # All documented examples show 'from': "14155551234" (no + prefix).
+    # The '+' in the from number can cause carrier routing failures.
+    cleaned_from = from_.lstrip("+") if from_ else from_
     body: dict[str, Any] = {
-        "from": from_,
+        "from": cleaned_from,
         "to": to,
         "answer_url": answer_url,
         "answer_method": "POST",

@@ -22,23 +22,17 @@ from services.call_recording import CallRecorder
 
 
 def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
-    """Resample 24kHz mono s16le PCM to 16kHz using NumPy linear interpolation.
+    """Resample 24kHz mono s16le PCM to 16kHz using audioop.ratecv (high quality).
 
-    The 24kHz→16kHz conversion is an exact 2:3 ratio — for every 3 input samples
-    we produce 2 output samples. This is ~3-5x faster than audioop.ratecv() for
-    this specific ratio and produces comparable audio quality for telephony.
-    ``state`` is unused (kept for API compatibility with audioop.ratecv callers).
+    Uses the same polyphase resampler as the greeting PCM pipeline for
+    consistent audio quality. The ``state`` parameter carries the audioop
+    rate converter state across chunk boundaries for smooth cross-chunk output.
     """
     if len(pcm_24k) < 2:
         return pcm_24k, state
-    samples_in = np.frombuffer(pcm_24k, dtype=np.int16)
-    n_in = len(samples_in)
-    n_out = int(n_in * 2 / 3)
-    if n_out < 1:
-        return pcm_24k, state
-    src_idx = np.linspace(0, n_in - 1, n_out, endpoint=True)
-    resampled = np.interp(src_idx, np.arange(n_in), samples_in.astype(np.float32))
-    return resampled.astype(np.int16).tobytes(), state
+    prev_state = state.get("ratecv") if isinstance(state, dict) else None
+    out, new_state = audioop.ratecv(pcm_24k, 2, 1, 24000, 16000, prev_state)
+    return out, {"ratecv": new_state}
 
 
 def load_background_audio(path: str, target_sr: int = 16000) -> Optional[np.ndarray]:

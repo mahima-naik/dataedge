@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import os
+import struct
 import time
 from typing import Any, Optional
 
@@ -667,6 +668,11 @@ async def handle_vobiz_ws_live(
     last_meaningful_t: float = time.perf_counter()
     SILENCE_HANGUP_SEC: float = float(os.getenv("CALL_SILENCE_HANGUP_SEC", "30"))
     MAX_CALL_DURATION_SEC: float = float(os.getenv("CALL_MAX_DURATION_SEC", "600"))
+    # Grace period: do NOT trigger silence watchdog during the first N seconds
+    # after Vobiz stream starts.  Gives time for greeting PCM to play and
+    # Gemini to generate its first audio response.
+    SILENCE_GRACE_SEC: float = float(os.getenv("CALL_SILENCE_GRACE_SEC", "15"))
+    vobiz_stream_started_at: float = 0.0  # set when vobiz_stream_started fires
 
     # Resolve Vobiz REST credentials for this leg so we can DELETE the call
     # when the agent fires ``end_call``. Uses the same resolution as the
@@ -688,6 +694,21 @@ async def handle_vobiz_ws_live(
 
     prior_16k_queue = bytearray()
     vobiz_stream_started = asyncio.Event()
+    # Greeting phase: tracks when the scripted greeting finishes playing.
+    # During this phase and for a short grace period after, user audio is suppressed
+    # (not forwarded to Gemini) and interruption events are ignored — prevents the
+    # deadlock where the user says "Hello?" during greeting delay and VAD keeps waiting.
+    # Set to the timestamp when greeting phase ends; 0 means greeting phase is active.
+    greeting_phase_end_t: float = 0.0
+    # Grace period after greeting ends to suppress user audio (prevents VAD deadlock
+    # if user says "Hello?" right as greeting finishes)
+    GREETING_PHASE_GRACE_SEC: float = 1.5
+
+    def _in_greeting_phase() -> bool:
+        """Return True if we're still in the greeting phase (greeting active or grace period)."""
+        if greeting_phase_end_t == 0.0:
+            return True  # Greeting hasn't ended yet
+        return (time.perf_counter() - greeting_phase_end_t) < GREETING_PHASE_GRACE_SEC
 
     role_config = get_state(prompt_role)
     from core.state import resolved_greeting_text
@@ -745,6 +766,13 @@ async def handle_vobiz_ws_live(
 
             recorded = None
             greet_for_hash = (greeting_text or opening_line or "").strip()
+            logger.info(
+                "DIAG greeting: role={} greeting_text={!r} opening_line={!r} inbound={}",
+                role,
+                (greeting_text or "")[:80],
+                (opening_line or "")[:80],
+                bool(inbound_role),
+            )
             if inbound_role:
                 recorded = load_recorded_greeting_pcm(
                     role, "inbound", greeting_text=greet_for_hash
@@ -757,10 +785,16 @@ async def handle_vobiz_ws_live(
                     pcm_bytes = pcm_resample(pcm_bytes, in_sr, VOBIZ_SR)
                 prior_16k_queue.extend(pcm_bytes)
                 logger.info(
-                    "Loaded recorded greeting from disk for role={} inbound={} ({} bytes)",
+                    "Loaded recorded greeting from disk for role={} inbound={} ({} bytes, sr={})",
                     role,
                     bool(inbound_role),
                     len(pcm_bytes),
+                    in_sr,
+                )
+            else:
+                logger.warning(
+                    "DIAG: No greeting PCM found on disk for role={} — will rely on Gemini Live opening nudge",
+                    role,
                 )
 
     if len(prior_16k_queue) > 0:
@@ -906,11 +940,16 @@ async def handle_vobiz_ws_live(
 
         async def scripted_sender() -> None:
             try:
-                await vobiz_stream_started.wait()
+                # Wait until Vobiz stream is ready (start event received)
+                # but with a timeout so we don't block greeting forever.
+                try:
+                    await asyncio.wait_for(vobiz_stream_started.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    logger.warning("scripted_sender: vobiz_stream_started timeout — sending greeting anyway")
                 chunk_samples = int(VOBIZ_SR * 0.02)
                 chunk_bytes = chunk_samples * 2
-                # Burst 400ms instantly to fill Vobiz's native jitter buffer!
-                next_wakeup = time.perf_counter() - 0.40
+                # Burst 800ms instantly to fill Vobiz's native jitter buffer!
+                next_wakeup = time.perf_counter() - 0.80
                 scripted_bg_pos = 0
                 while len(buf) > 0:
                     if abort_scripted.is_set():
@@ -934,17 +973,16 @@ async def handle_vobiz_ws_live(
                     if sleep_time > 0:
                         await asyncio.sleep(sleep_time)
                     else:
-                        # Slightly late; catch up without permanently drifting next_wakeup grid.
-                        # Reset grid only if excessively delayed (> 2000 ms) to allow our intentional bursts!
-                        if sleep_time < -2.0:
-                            next_wakeup = time.perf_counter()
+                        # Reset timing grid on any delay to prevent cumulative drift
+                        # which causes buffer underflow and audio stuttering
+                        next_wakeup = time.perf_counter()
             finally:
                 opening_done.set()
 
         inbound_script_cb_recorded = False
 
         async def recv_until_scripted_done() -> bool:
-            nonlocal inbound_script_cb_recorded, vobiz_meta_logged, last_user_audio_t
+            nonlocal inbound_script_cb_recorded, vobiz_meta_logged, last_user_audio_t, vobiz_stream_started_at
             poll_s = 0.05
             while True:
                 if opening_done.is_set():
@@ -983,6 +1021,13 @@ async def handle_vobiz_ws_live(
                         start.get("mediaFormat"),
                     )
                     vobiz_stream_started.set()
+                    vobiz_stream_started_at = time.perf_counter()
+                    logger.info(
+                        "DIAG: Vobiz stream STARTED call={} stream={} ({}ms after WS accept)",
+                        state.call_id,
+                        state.stream_id,
+                        int((vobiz_stream_started_at - _opening_t0) * 1000),
+                    )
 
                     if inbound_role and not inbound_script_cb_recorded:
                         inbound_script_cb_recorded = True
@@ -1048,12 +1093,25 @@ async def handle_vobiz_ws_live(
             return False
 
         logger.info("Scripted greeting finished — connecting Gemini Live WebSocket.")
+        logger.info(
+            "DIAG: Scripted greeting DONE — elapsed={:.0f}ms prior_bytes={} gemini_will_connect_now=True",
+            (time.perf_counter() - _opening_t0) * 1000,
+            _prior_opening_bytes_at_connect,
+        )
         return True
 
     try:
         if defer_gemini_until_scripted:
             if not await drain_scripted_opening_before_live_connect(opening_script_pcm):
                 return
+            # Greeting phase is over — record the timestamp so user audio suppression
+            # persists for a short grace period (prevents VAD deadlock).
+            greeting_phase_end_t = time.perf_counter()
+            logger.info("Greeting phase ended — user audio forwarding will resume after {:.1f}s grace", GREETING_PHASE_GRACE_SEC)
+        else:
+            # No scripted greeting — greeting phase ends immediately
+            greeting_phase_end_t = time.perf_counter()
+            logger.info("No scripted greeting — greeting phase ended immediately")
 
         # ── Latency opt: await the early-started Gemini WS connect ──────
         # The connect was kicked off right after api_key resolution so the
@@ -1063,6 +1121,11 @@ async def handle_vobiz_ws_live(
         _gem_live_session_t0 = time.perf_counter()
         _ws_connect_ms = (_gem_live_session_t0 - _opening_t0) * 1000
         logger.info("OPENING_TIMING | gemini_ws_connected | +{:.0f}ms", _ws_connect_ms)
+        logger.info(
+            "DIAG: Gemini Live WS connected in {:.0f}ms — gem={}",
+            _ws_connect_ms,
+            type(_gem).__name__ if _gem else "FAILED",
+        )
 
         # Minimal async-context-manager wrapper so the rest of the block
         # keeps the ``async with ... as gem:`` idiom unchanged.
@@ -1093,6 +1156,12 @@ async def handle_vobiz_ws_live(
             await gem.send(json.dumps(setup))
             _setup_ms = (time.perf_counter() - _opening_t0) * 1000
             logger.info("Gemini Live: setup sent (model={}, voice={}, lang={}) [OPENING_TIMING | setup_sent | +{:.0f}ms]", model, voice, language_code, _setup_ms)
+            logger.info(
+                "DIAG: Gemini Live setup sent — model={} voice={} system_prompt_len={} chars",
+                model,
+                voice,
+                len(system_prompt),
+            )
 
             # No blocking recv(): ``pump_gemini_to_queue`` consumes ``setupComplete`` on the same
             # socket immediately — an extra recv here added up to 500 ms before the PCM kick.
@@ -1142,7 +1211,7 @@ async def handle_vobiz_ws_live(
             inbound_callback_recorded = False
 
             async def pump_vobiz_to_gemini() -> None:
-                nonlocal last_user_audio_t, vobiz_meta_logged, inbound_callback_recorded
+                nonlocal last_user_audio_t, vobiz_meta_logged, inbound_callback_recorded, vobiz_stream_started_at
                 connect_t0 = time.perf_counter()
                 while True:
                     raw = await _vobiz_incoming.get()
@@ -1173,6 +1242,13 @@ async def handle_vobiz_ws_live(
                             state.call_id, state.stream_id, start.get("mediaFormat"),
                         )
                         vobiz_stream_started.set()
+                        vobiz_stream_started_at = time.perf_counter()
+                        logger.info(
+                            "DIAG: Vobiz stream STARTED (non-scripted path) call={} stream={} ({}ms after WS accept)",
+                            state.call_id,
+                            state.stream_id,
+                            int((vobiz_stream_started_at - _opening_t0) * 1000),
+                        )
 
                         if inbound_role and not inbound_callback_recorded:
                             inbound_callback_recorded = True
@@ -1225,9 +1301,10 @@ async def handle_vobiz_ws_live(
                             logger.debug("Base64 decode or recording failed in pump_vobiz_to_gemini")
                         last_user_audio_t = time.perf_counter()
 
-                        # While scripted PCM is still queued for the handset, skip forwarding callee
-                        # audio — avoids interrupting a pre-rendered greeting.
-                        if len(prior_16k_queue) > 0:
+                        # During greeting phase: suppress ALL user audio to prevent VAD
+                        # deadlock (user says "Hello?" during greeting delay → VAD keeps waiting).
+                        # Also skip when scripted PCM is still queued for the handset.
+                        if _in_greeting_phase() or len(prior_16k_queue) > 0:
                             continue
 
                         mute_s = max(0.0, settings.vobiz_gemini_live_forward_mute_seconds)
@@ -1329,7 +1406,27 @@ async def handle_vobiz_ws_live(
                         logger.debug("Ignoring malformed JSON from Gemini Live")
                         continue
                     if obj.get("error"):
-                        logger.error("Gemini Live upstream error: {}", obj.get("error"))
+                        _err = obj["error"]
+                        logger.error(
+                            "Gemini Live upstream error: {} (full={})",
+                            _err if isinstance(_err, str) else str(_err)[:200],
+                            obj,
+                        )
+                        # Fatal auth / access errors — terminate immediately instead of waiting 30s
+                        _err_str = str(_err).lower()
+                        if any(kw in _err_str for kw in ("permission", "denied", "unauthorized", "api_key", "quota", "billing", "403", "401")):
+                            logger.error(
+                                "Gemini Live FATAL error (likely API key / billing issue) — terminating call {} immediately",
+                                state.call_id,
+                            )
+                            await terminate_call(
+                                ws,
+                                call_uuid=state.call_id,
+                                auth_id=vobiz_auth_id,
+                                auth_token=vobiz_auth_token,
+                                drain_seconds=0.0,
+                            )
+                            return
                     if obj.get("goAway"):
                         logger.warning("Gemini Live goAway: {}", obj.get("goAway"))
 
@@ -1422,8 +1519,16 @@ async def handle_vobiz_ws_live(
                             await _try_inject_live_rag("activityEnd")
 
                     if sc.get("interrupted"):
-                        # Allow interruption during greeting if more than 1.2 seconds elapsed since start of session
-                        if len(prior_16k_queue) > 0 and (time.perf_counter() - _gem_live_session_t0) < 1.2:
+                        # During greeting phase: ignore ALL interruptions — the greeting
+                        # must play completely to prevent the deadlock where user says
+                        # "Hello?" and AI keeps waiting.
+                        if _in_greeting_phase():
+                            logger.info(
+                                "Gemini Live: interrupted during greeting phase — ignoring "
+                                "(greeting must complete, {:.0f} ms elapsed)",
+                                (time.perf_counter() - _gem_live_session_t0) * 1000.0,
+                            )
+                        elif len(prior_16k_queue) > 0 and (time.perf_counter() - _gem_live_session_t0) < 1.2:
                             logger.info(
                                 "Gemini Live: interrupted during scripted opening — ignoring early start "
                                 "({} bytes still queued, {:.0f} ms elapsed)",
@@ -1446,7 +1551,10 @@ async def handle_vobiz_ws_live(
                             prior_16k_queue.clear()
                             pending_audio_24k.clear()
                             gemini_16k_queue.clear()
-                            gemini_resample_state = None
+                            # Keep gemini_resample_state across turns for smooth
+                            # audio continuity (prevents clicks/pops at turn boundaries).
+                            # The resampler state carries filter history that must not
+                            # be abruptly reset after barge-in.
                             model_generation_active = False
                             await vobiz_send_clear_audio(ws)
 
@@ -1463,9 +1571,9 @@ async def handle_vobiz_ws_live(
                             continue
                         pcm = base64.b64decode(b64)
 
-                        if len(prior_16k_queue) > 0:
-                            # Scripted opening is still on the line — do not interleave
-                            # LLM "greeting" (often "from GMT" due to system text).
+                        # During greeting phase or while scripted PCM is still on the line,
+                        # do not interleave LLM audio — the scripted greeting must play cleanly.
+                        if _in_greeting_phase() or len(prior_16k_queue) > 0:
                             continue
                         had_model_audio_turn = True
                         model_generation_active = True
@@ -1489,9 +1597,9 @@ async def handle_vobiz_ws_live(
                             first_byte_logged = True
                         pending_audio_24k.extend(pcm)
                         
-                        # Resample on 40ms boundary using fast NumPy resampler.
-                        # Processing 40ms blocks (1920 bytes @ 24kHz) → 1280 bytes @ 16kHz.
-                        CHUNK_24K_BYTES = int(GEMINI_OUT_SR * 2 * 0.040)
+                        # Resample on 20ms boundary to match playout tick (640 bytes @ 16kHz).
+                        # Processing 20ms blocks (960 bytes @ 24kHz) → 640 bytes @ 16kHz = 1 playout tick.
+                        CHUNK_24K_BYTES = int(GEMINI_OUT_SR * 2 * 0.020)
                         while len(pending_audio_24k) >= CHUNK_24K_BYTES:
                             chunk = bytes(pending_audio_24k[:CHUNK_24K_BYTES])
                             del pending_audio_24k[:CHUNK_24K_BYTES]
@@ -1515,7 +1623,8 @@ async def handle_vobiz_ws_live(
                             pending_audio_24k.clear()
                         # Clear the prefetch cache at turn boundary: next utterance has a new query.
                         rag_prefetch_cache.clear()
-                        gemini_resample_state = None
+                        # Keep gemini_resample_state across turns for smooth audio continuity
+                        # (prevents clicks/pops at turn boundaries)
                         u_turn = (last_in_user or "").strip()
                         if u_turn:
                             append_turn(live_log_id, "user", u_turn, "vobiz-live", base_dir=log_dir)
@@ -1554,10 +1663,23 @@ async def handle_vobiz_ws_live(
 
             async def pump_mixed_to_vobiz() -> None:
                 nonlocal model_generation_active
-                # Do not send playAudio until Vobiz ``start`` — early frames confuse some SIP legs.
-                await vobiz_stream_started.wait()
+                # Wait for Vobiz stream to be ready, but with a timeout so we don't
+                # block forever if the start event is delayed.
+                _mixer_start_t = time.perf_counter()
+                try:
+                    await asyncio.wait_for(vobiz_stream_started.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("pump_mixed_to_vobiz: vobiz_stream_started timeout — continuing anyway")
+                logger.info(
+                    "Mixer started for camp={} call={} stream={} (waited {:.0f}ms, stream_started={})",
+                    camp_id,
+                    state.call_id,
+                    state.stream_id,
+                    (time.perf_counter() - _mixer_start_t) * 1000,
+                    vobiz_stream_started.is_set(),
+                )
                 # 20 ms mixer tick: prevents bursty packet transmission and improves playout smoothness.
-                # The 24kHz -> 16kHz resampler continues to run statefully on 40ms boundaries inside pump_gemini_to_queue.
+                # The 24kHz -> 16kHz resampler continues to run statefully on 20ms boundaries inside pump_gemini_to_queue.
                 chunk_samples = int(VOBIZ_SR * 0.02)  # 20 ms = 320 samples @16k
                 chunk_bytes = chunk_samples * 2
                 bg_pos = 0
@@ -1567,6 +1689,17 @@ async def handle_vobiz_ws_live(
                 PREBUFFER_BYTES = int(VOBIZ_SR * 2 * settings.vobiz_playout_prebuffer_seconds)
                 is_playing_gemini = False
                 _first_gemini_response = True  # Latency opt: skip prebuffer gate for first response
+                # Last sample value for hold-last-sample technique (prevents clicks/pops from silence padding)
+                _hold_l: int = 0  # left channel (mono = uses left)
+                
+                def _hold_pad(length: int) -> bytes:
+                    """Generate padding bytes that hold the last output sample value
+                    instead of going to zero abruptly — eliminates click/pop at boundaries."""
+                    nonlocal _hold_l
+                    if length <= 0:
+                        return b""
+                    pad = struct.pack("<h", _hold_l) * (length // 2)
+                    return pad
                 
                 while True:
                     gemini_pcm = b""
@@ -1594,29 +1727,52 @@ async def handle_vobiz_ws_live(
                             if q_len >= chunk_bytes:
                                 gemini_pcm = bytes(gemini_16k_queue[:chunk_bytes])
                                 del gemini_16k_queue[:chunk_bytes]
+                                # Track last sample for hold-last-sample technique
+                                _hold_l = struct.unpack("<h", gemini_pcm[-2:])[0]
                             elif q_len > 0 and not model_generation_active:
-                                # End of turn drain — pad remainder with silence for clean boundary
+                                # End of turn drain — apply short fade-out to prevent click
                                 remaining = bytes(gemini_16k_queue)
                                 gemini_16k_queue.clear()
-                                gemini_pcm = remaining + b"\x00" * (chunk_bytes - len(remaining))
+                                rlen = len(remaining)
+                                if rlen >= 4:
+                                    # Apply linear fade-out over the last 5ms (80 samples = 160 bytes)
+                                    fade_len = min(rlen, int(VOBIZ_SR * 2 * 0.005))
+                                    faded = bytearray(remaining)
+                                    for i in range(fade_len // 2):
+                                        frac = (fade_len // 2 - i) / (fade_len // 2)
+                                        pos = rlen - fade_len + i * 2
+                                        val = struct.unpack("<h", faded[pos:pos+2])[0]
+                                        faded[pos:pos+2] = struct.pack("<h", int(val * frac))
+                                    gemini_pcm = bytes(faded)
+                                else:
+                                    gemini_pcm = remaining
+                                # Pad with hold-sample to fill chunk
+                                if len(gemini_pcm) < chunk_bytes:
+                                    gemini_pcm += _hold_pad(chunk_bytes - len(gemini_pcm))
                                 is_playing_gemini = False
                             elif q_len > 0 and model_generation_active:
-                                # Partial chunk during generation — drain what we have, pad with silence
+                                # Partial chunk during generation — use hold-last-sample instead of silence
                                 remaining = bytes(gemini_16k_queue)
                                 gemini_16k_queue.clear()
-                                gemini_pcm = remaining + b"\x00" * (chunk_bytes - len(remaining))
+                                gemini_pcm = remaining + _hold_pad(chunk_bytes - len(remaining))
                             elif model_generation_active:
-                                # Buffer underflow during active generation — send silence
-                                # to keep the Vobiz jitter buffer warm, but keep playing
-                                # so we resume seamlessly when audio arrives.
-                                gemini_pcm = b"\x00" * chunk_bytes
+                                # Buffer underflow — use hold-last-sample instead of abrupt silence
+                                gemini_pcm = _hold_pad(chunk_bytes)
                             else:
                                 # Generation finished with empty buffer — stop playback
                                 is_playing_gemini = False
-                                gemini_pcm = b"\x00" * chunk_bytes
+                                gemini_pcm = _hold_pad(chunk_bytes)
 
                     # Always send to Vobiz to keep the native jitter buffer warmed up and perfectly synced!
+                    first_tx = not latency._first_vobiz_send
                     latency.on_first_vobiz_send()
+                    if first_tx:
+                        logger.info(
+                            "Mixer first packet sent to Vobiz (call={} stream={} elapsed={:.0f}ms)",
+                            state.call_id,
+                            state.stream_id,
+                            (time.perf_counter() - _opening_t0) * 1000,
+                        )
                     mixed, bg_pos = mix_voice_and_background_tick(
                         gemini_pcm or (b"\x00" * chunk_bytes),
                         bg_audio,
@@ -1645,24 +1801,38 @@ async def handle_vobiz_ws_live(
                     if sleep_time > 0:
                         await asyncio.sleep(sleep_time)
                     else:
-                        # Slightly late; catch up without permanently drifting next_wakeup grid.
-                        # Reset grid only if excessively delayed (> 2000 ms) so we allow our intentional bursts!
-                        if sleep_time < -2.0:
-                            next_wakeup = time.perf_counter()
+                        # Reset timing grid on any delay to prevent cumulative drift
+                        # which causes buffer underflow and audio stuttering
+                        next_wakeup = time.perf_counter()
 
             async def silence_watchdog() -> None:
                 """Hang up the call if neither side has done anything meaningful for
                 ``SILENCE_HANGUP_SEC`` seconds. Belt-and-braces fallback for cases
-                where the model never invokes ``end_call`` (e.g. stuck silence)."""
+                where the model never invokes ``end_call`` (e.g. stuck silence).
+                During the first ``SILENCE_GRACE_SEC`` after Vobiz stream starts,
+                the watchdog is paused to allow greeting playback + first AI response."""
                 while True:
                     await asyncio.sleep(5.0)
+                    # Grace period: don't fire during the first seconds after stream starts
+                    if vobiz_stream_started_at > 0:
+                        elapsed_since_stream = time.perf_counter() - vobiz_stream_started_at
+                        if elapsed_since_stream < SILENCE_GRACE_SEC:
+                            logger.debug(
+                                "Silence watchdog: grace period ({:.0f}/{:.0f}s since stream start)",
+                                elapsed_since_stream,
+                                SILENCE_GRACE_SEC,
+                            )
+                            continue
                     idle = time.perf_counter() - last_meaningful_t
                     if idle >= SILENCE_HANGUP_SEC:
                         logger.warning(
-                            "Silence watchdog: idle for {:.0f}s (>= {:.0f}s) — REST hangup (call_uuid={})",
+                            "Silence watchdog: idle for {:.0f}s (>= {:.0f}s) — REST hangup (call_uuid={}) "
+                            "[stream started {:.0f}s ago, grace={:.0f}s]",
                             idle,
                             SILENCE_HANGUP_SEC,
                             state.call_id,
+                            (time.perf_counter() - vobiz_stream_started_at) if vobiz_stream_started_at else -1,
+                            SILENCE_GRACE_SEC,
                         )
                         await terminate_call(
                             ws,
@@ -1693,16 +1863,23 @@ async def handle_vobiz_ws_live(
                 except Exception:
                     pass
 
-            task_in = asyncio.create_task(pump_vobiz_to_gemini())
-            task_out = asyncio.create_task(pump_gemini_to_queue())
-            task_mix = asyncio.create_task(pump_mixed_to_vobiz())
-            task_dog = asyncio.create_task(silence_watchdog())
-            task_user_silence = asyncio.create_task(user_silence_watchdog())
-            task_max_dur = asyncio.create_task(max_duration_watchdog())
+            task_in = asyncio.create_task(pump_vobiz_to_gemini(), name="pump_vobiz_to_gemini")
+            task_out = asyncio.create_task(pump_gemini_to_queue(), name="pump_gemini_to_queue")
+            task_mix = asyncio.create_task(pump_mixed_to_vobiz(), name="pump_mixed_to_vobiz")
+            task_dog = asyncio.create_task(silence_watchdog(), name="silence_watchdog")
+            task_user_silence = asyncio.create_task(user_silence_watchdog(), name="user_silence_watchdog")
+            task_max_dur = asyncio.create_task(max_duration_watchdog(), name="max_duration_watchdog")
 
             # When no scripted PCM: prompt Gemini to speak the opening as soon as the leg is up.
             needs_live_opening_nudge = _prior_opening_bytes_at_connect == 0 and bool(
                 (opening_line or "").strip()
+            )
+            logger.info(
+                "DIAG opening nudge decision: prior_pcm_bytes={} opening_line={!r} needs_nudge={} gemini_live_first={}",
+                _prior_opening_bytes_at_connect,
+                (opening_line or "")[:80],
+                needs_live_opening_nudge,
+                gemini_live_first,
             )
 
             async def _send_live_opening_nudge(label: str) -> None:
@@ -1748,6 +1925,30 @@ async def handle_vobiz_ws_live(
                             )
                         else:
                             logger.exception("A background task in live_session crashed fatally! {}", exc)
+                # Diagnostic summary
+                _total_session_sec = time.perf_counter() - _opening_t0
+                _had_greeting = _prior_opening_bytes_at_connect > 0
+                _done_info = []
+                for ft in done:
+                    name = ft.get_name()
+                    exc = ft.exception()
+                    if exc is not None:
+                        _done_info.append(f"{name}:exc={type(exc).__name__}:{str(exc)[:80]}")
+                    elif ft.cancelled():
+                        _done_info.append(f"{name}:cancelled")
+                    else:
+                        _done_info.append(f"{name}:ok={type(ft.result()).__name__}")
+                logger.info(
+                    "DIAG SESSION END: role={} camp={} duration={:.1f}s had_greeting_pcm={} "
+                    "stream_started_at={:.0f}s gemini_connected={} tasks_done=[{}]",
+                    role,
+                    camp_id,
+                    _total_session_sec,
+                    _had_greeting,
+                    vobiz_stream_started_at - _opening_t0 if vobiz_stream_started_at else -1,
+                    _gem_live_session_t0 > 0 if '_gem_live_session_t0' in dir() else False,
+                    "; ".join(_done_info),
+                )
             finally:
                 for t in {task_in, task_out, task_mix, task_dog, task_user_silence, task_max_dur}:
                     if not t.done():
@@ -1781,6 +1982,9 @@ async def handle_vobiz_ws_live(
                 duration = time.time() - connected_at
                 _CAMPAIGN_DATA[camp_id]["call_duration_sec"] = round(duration, 1)
                 _CAMPAIGN_DATA[camp_id]["_call_ended_at"] = time.time()
+                # Clear _call_connected_at so try_recover_stale_vobiz_slot
+                # doesn't incorrectly treat a closed call as still active.
+                del _CAMPAIGN_DATA[camp_id]["_call_connected_at"]
                 dur_sec = float(_CAMPAIGN_DATA[camp_id]["call_duration_sec"])
                 logger.info(f"Call {camp_id} ended — duration: {duration:.0f}s")
                 

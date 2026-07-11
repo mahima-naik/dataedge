@@ -48,7 +48,7 @@ class MCPClient:
 def main():
     client = MCPClient()
     print("Navigating...")
-    client.call_tool("navigate_page", {"type": "url", "url": "http://127.0.0.1:8000/login"})
+    client.call_tool("navigate_page", {"type": "url", "url": "http://127.0.0.1:8001/login"})
     
     time.sleep(1)
     # The UIDs from earlier snapshot were 1_5, 1_6, 1_7.

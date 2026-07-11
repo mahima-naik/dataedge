@@ -53,18 +53,14 @@ function applyCampaignHoursUI(hours) {
 
 function applyCampaignPausedUI(paused) {
     const banner = document.getElementById('campaign-quiet-hours-banner');
-    if (!paused) return;
-    if (banner) {
-        banner.style.display = 'block';
-        banner.textContent =
-            'Campaign is paused — outbound dialing is off. Re-analyze and the lead list still work; no new calls will be placed until you Start during calling hours (9:30 AM – 8:30 PM IST).';
+    if (paused) {
+        if (banner) {
+            banner.style.display = 'block';
+            banner.textContent =
+                'Campaign is paused — outbound dialing is off. Re-analyze and the lead list still work; no new calls will be placed until you Start during calling hours (9:30 AM – 8:30 PM IST).';
+        }
     }
-    const btnStart = document.getElementById('btn-start');
-    if (btnStart) {
-        btnStart.disabled = true;
-        btnStart.setAttribute('title', 'Campaign paused');
-    }
-}
+    /* When !paused, do nothing — applyCampaignHoursUI re-manages the banner/button on the next poll. */
 
 const LEAD_SESSION_KEY_PREFIX = 'vernika_leads_snap_v2_';
 const DASH_SNAP_KEY_PREFIX = 'vernika_dash_snap_v2_';
@@ -386,8 +382,8 @@ async function syncState() {
 
         campaignWorkerActive = !!data.active;
         applyCampaignHoursUI(data.campaign_hours);
+        applyCampaignPausedUI(data.campaign_paused);
         if (data.campaign_paused) {
-            applyCampaignPausedUI(true);
             campaignWorkerActive = false;
         }
         let chartSample = Array.isArray(data.chart_sample) ? data.chart_sample : [];

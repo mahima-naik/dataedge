@@ -361,7 +361,20 @@ async def factory_start_call(agent_id: str, req: StartCallRequest):
 
         async def _do_dial():
             try:
-                await make_vobiz_call(to=ph, from_=v_from, answer_url=answer_url, auth_id=v_auth_id, auth_token=v_token)
+                _f_resp = await make_vobiz_call(
+                    to=ph, from_=v_from, answer_url=answer_url,
+                    auth_id=v_auth_id, auth_token=v_token,
+                    extra={
+                        "ring_url": f"{v_base}/vobiz/ring?camp_id={call_id}",
+                        "ring_method": "POST",
+                        "hangup_url": f"{v_base}/vobiz/hangup?camp_id={call_id}",
+                        "hangup_method": "POST",
+                        "hangup_on_ring": "60",
+                    },
+                )
+                _f_uuid = _f_resp.get("request_uuid") or ""
+                if _f_uuid:
+                    _CAMPAIGN_DATA[call_id]["_vobiz_call_uuid"] = _f_uuid
             except Exception as e:
                 logger.error(f"Sandbox call failed for {call_id}: {e}")
 

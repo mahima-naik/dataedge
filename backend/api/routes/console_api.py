@@ -17,9 +17,11 @@ from loguru import logger
 from core.auth import get_current_user, _decode_jwt
 from core.state import (
     get_state, save_role_state, normalize_console_role, resolved_greeting_text, _CAMPAIGN_DATA,
+    _CAMPAIGN_TASKS,
     role_has_active_vobiz_call, acquire_vobiz_call_slot, release_vobiz_call_slot,
     try_recover_stale_vobiz_slot,
 )
+from core import storage as lead_storage
 from config import settings
 from core.outbound_numbers import resolve_outbound_from_number
 from core.vobiz_credentials import resolve_vobiz_credentials
@@ -475,24 +477,10 @@ async def manual_call(
         raise HTTPException(400, "Invalid phone number — enter 10 digits (after +91), or a full number starting with + (e.g. +971…).")
 
     if role_has_active_vobiz_call(role):
-        # Self-healing: check if the claimed slot is actually stale (no WS ever connected)
-        recovered = try_recover_stale_vobiz_slot(role)
-        if recovered:
-            logger.info(
-                "Manual call: stale slot recovered for role={} — proceeding with dial",
-                role,
-            )
-        else:
-            logger.warning(
-                "Manual call blocked for role={}: active call slot is held and appears valid",
-                role,
-            )
-            raise HTTPException(
-                409,
-                "A call is already in progress for this role. Please wait for it to finish before dialing again.",
-            )
-
-    acquire_vobiz_call_slot(role)
+        logger.info(
+            "Manual call: campaign has active slot for role={}, proceeding anyway (parallel mode)",
+            role,
+        )
 
     camp_id = f"manual_{role}_{uuid.uuid4()}"
     import time as _time
@@ -548,13 +536,23 @@ async def manual_call(
             v_base or "",
             camp_id,
         )
-        await make_vobiz_call(
+        _vobiz_resp = await make_vobiz_call(
             to=to_norm,
             from_=from_number,
             answer_url=f"{v_base}/vobiz/answer?camp_id={camp_id}",
             auth_id=auth_id,
             auth_token=auth_token,
+            extra={
+                "ring_url": f"{v_base}/vobiz/ring?camp_id={camp_id}",
+                "ring_method": "POST",
+                "hangup_url": f"{v_base}/vobiz/hangup?camp_id={camp_id}",
+                "hangup_method": "POST",
+                "hangup_on_ring": "60",
+            },
         )
+        _call_uuid = _vobiz_resp.get("request_uuid") or ""
+        if _call_uuid:
+            _CAMPAIGN_DATA[camp_id]["_vobiz_call_uuid"] = _call_uuid
 
         # Safety-net: if Vobiz never connects the WS, release the slot after
         # a timeout so the campaign can resume.  ``_finalize_manual_call_leg``
@@ -565,17 +563,11 @@ async def manual_call(
             await asyncio.sleep(45)
             mem = _CAMPAIGN_DATA.get(cid, {})
             connected = bool(mem.get("_call_connected_at"))
-            # Always release the slot as a safety-net. The WebSocket close
-            # handler also releases, but if WS never connected or crashed,
-            # this ensures the slot is freed. Calling release twice is safe.
-            if role_has_active_vobiz_call(r):
-                release_vobiz_call_slot(r)
-                logger.warning(
-                    "Manual call slot guard: releasing slot for camp_id={} role={} (connected={})",
-                    cid, r, connected,
-                )
-            # Mark call as failed if WebSocket never connected
             if not connected:
+                logger.warning(
+                    "Manual call slot guard: WS never connected for camp_id={} role={}",
+                    cid, r,
+                )
                 from core.storage import mark_manual_call_failed as _mcf
                 await _mcf(cid, "WebSocket never connected (timeout)")
 
@@ -587,7 +579,6 @@ async def manual_call(
         return {"status": "ok", "camp_id": camp_id, "manual_call_id": manual_call_id}
     except Exception as e:
         logger.exception(f"Manual call failed")
-        release_vobiz_call_slot(role)
         await mark_manual_call_failed(camp_id, str(e))
         _CAMPAIGN_DATA.pop(camp_id, None)
         raise HTTPException(500, str(e))

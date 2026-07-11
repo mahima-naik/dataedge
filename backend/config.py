@@ -34,7 +34,7 @@ class Settings:
 
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
-    server_url: str = os.getenv("SERVER_URL", "http://localhost:8000")
+    server_url: str = os.getenv("SERVER_URL", "http://localhost:8001")
 
     # When false: no RAG append and no live keyword RAG on Vobiz.
     rag_enabled: bool = _b("RAG_ENABLED", True)
@@ -137,6 +137,12 @@ class Settings:
     # Increase to 0.12-0.20 only if audio stuttering occurs on high-jitter networks.
     vobiz_playout_prebuffer_seconds: float = float(
         os.getenv("VOBIZ_PLAYOUT_PREBUFFER_SECONDS", "0.06")
+    )
+    # Browser voice test prebuffer (default: 0.150 = 150ms).
+    # Accumulates this much audio before starting browser playout.
+    # Higher values reduce stuttering but increase latency.
+    browser_voice_prebuffer_seconds: float = float(
+        os.getenv("BROWSER_VOICE_PREBUFFER_SECONDS", "0.150")
     )
 
     # Conversation logging
@@ -252,6 +258,11 @@ def validate_critical_config() -> list[str]:
     problems: list[str] = []
     if not settings.gemini_api_key:
         problems.append("GEMINI_API_KEY / GOOGLE_API_KEY is not set")
+    elif not settings.gemini_api_key.startswith("AIza"):
+        problems.append(
+            f"GEMINI_API_KEY starts with '{settings.gemini_api_key[:6]}…' — expected 'AIza…' format. "
+            "Ensure this is a valid Google AI Studio API key."
+        )
     vb = (
         settings.vobiz_auth_id
         and settings.vobiz_auth_token
@@ -273,7 +284,21 @@ def validate_critical_config() -> list[str]:
         problems.append(
             "VOBIZ_PUBLIC_BASE_URL looks like a Cloudflare quick tunnel — media WebSockets often never "
             "reach your server (calls ring then drop). Set VOBIZ_STREAM_PUBLIC_BASE_URL to your VPS "
-            "http(s) origin with port (e.g. http://YOUR_IP:8000) while keeping callbacks on the tunnel "
+            "http(s) origin with port (e.g. http://YOUR_IP:8001) while keeping callbacks on the tunnel "
             "if needed, or switch fully to a stable domain."
+        )
+    # Warn about empty stream URL (non-fatal but important)
+    if vb and pub and not ts:
+        problems.append(
+            "VOBIZ_STREAM_PUBLIC_BASE_URL is empty — media WebSocket will route through VOBIZ_PUBLIC_BASE_URL. "
+            "If your domain/hosting does NOT support WebSocket upgrades, calls will connect but produce SILENCE. "
+            "Set VOBIZ_STREAM_PUBLIC_BASE_URL=http://YOUR_VPS_IP:8001 for direct WS media."
+        )
+    # Silence hangup too short
+    silence_sec = float(os.getenv("CALL_SILENCE_HANGUP_SEC", "30"))
+    if silence_sec < 20:
+        problems.append(
+            f"CALL_SILENCE_HANGUP_SEC={silence_sec}s is very short — may hang up before AI can respond. "
+            "Recommended: 30-60s."
         )
     return problems

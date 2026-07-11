@@ -77,23 +77,31 @@ async def handle_web_voice_demo(
 
     gemini_url = (
         f"wss://generativelanguage.googleapis.com/ws/"
-        f"google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+        f"google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         f"?key={api_key}"
     )
 
     try:
-        async with ws_client.connect(gemini_url) as gws:
+        async with ws_client.connect(
+            gemini_url,
+            max_size=2 * 1024 * 1024,
+            ping_interval=10,
+            close_timeout=2,
+        ) as gws:
             # Setup Config
             setup_msg = {
                 "setup": {
                     "model": f"models/{model}",
-                    "generation_config": {
-                        "response_modalities": ["AUDIO"],
-                        "speech_config": {
-                            "voice_config": {"prebuilt_voice_config": {"voice_name": voice}}
+                    "generationConfig": {
+                        "responseModalities": ["audio"],
+                        "speechConfig": {
+                            "voiceConfig": {
+                                "prebuiltVoiceConfig": {"voiceName": voice}
+                            },
+                            "languageCode": settings.gemini_live_language_code,
                         },
                     },
-                    "system_instruction": {"parts": [{"text": system_prompt}]},
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
                 }
             }
             await gws.send(json.dumps(setup_msg))
@@ -106,6 +114,13 @@ async def handle_web_voice_demo(
                 logger.error(f"Gemini Live Web Demo: Setup timeout/error: {e}")
                 await ws.close()
                 return
+
+            # Send silence kick to activate VAD
+            try:
+                from services.vobiz_bridge.gemini_protocol import gemini_send_pcm_silence_kick
+                await gemini_send_pcm_silence_kick(gws, duration_ms=200)
+            except Exception:
+                pass
 
             async def gemini_to_browser():
                 try:
@@ -122,6 +137,9 @@ async def handle_web_voice_demo(
                             
                             if content.get("turnComplete"):
                                 await ws.send_json({"type": "status", "event": "turn_complete"})
+
+                        if data.get("interrupted"):
+                            await ws.send_json({"type": "interrupted"})
                 except Exception as e:
                     logger.debug(f"Gemini->Browser closed: {e}")
 
@@ -132,9 +150,10 @@ async def handle_web_voice_demo(
                         if msg["type"] == "audio":
                             gemini_msg = {
                                 "realtimeInput": {
-                                    "mediaChunks": [
-                                        {"data": msg["data"], "mimeType": "audio/pcm"}
-                                    ]
+                                    "audio": {
+                                        "data": msg["data"],
+                                        "mimeType": "audio/pcm;rate=16000",
+                                    }
                                 }
                             }
                             await gws.send(json.dumps(gemini_msg))

@@ -52,9 +52,11 @@ async def maybe_send_interested_whatsapp(
         "error": None,
     }
 
+    logger.info("maybe_send_interested_whatsapp called lead_id={} phone={!r} role={!r}", lead_id, phone, role)
+
     # Gate: feature must be enabled
     if not settings.whatsapp_auto_send_enabled:
-        logger.debug("WhatsApp auto-send disabled (WHATSAPP_AUTO_SEND_ON_INTERESTED=0)")
+        logger.warning("WhatsApp auto-send disabled (WHATSAPP_AUTO_SEND_ON_INTERESTED=0)")
         result["error"] = "WHATSAPP_AUTO_SEND_ON_INTERESTED=0"
         return result
 
@@ -63,6 +65,8 @@ async def maybe_send_interested_whatsapp(
         logger.warning("WhatsApp auto-send: neither OPENWA_ENABLED nor WHATSAPP_ACCESS_TOKEN configured")
         result["error"] = "No WhatsApp provider configured"
         return result
+
+    logger.info("WhatsApp auto-send gates passed lead_id={} openwa={} cloud={}", lead_id, settings.openwa_enabled, bool(settings.whatsapp_access_token))
 
     # Extract lead name and phone from DB record
     lead_name = ""

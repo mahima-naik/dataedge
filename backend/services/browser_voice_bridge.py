@@ -149,15 +149,21 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
                 logger.warning("Browser voice: silence kick failed: {}", exc)
 
             pending_audio_24k = bytearray()
-            flush_bytes = int(GEMINI_OUT_SR * 2 * 0.04)
+            browser_16k_queue = bytearray()  # Jitter buffer for browser playout
+            flush_bytes = int(GEMINI_OUT_SR * 2 * 0.04)  # 40ms @ 24kHz
+            chunk_16k_bytes = int(16000 * 2 * 0.020)  # 20ms @ 16kHz = 640 bytes
             last_meaningful_t = time.perf_counter()
             is_generating = False
             resample_state = None
             first_audio_chunk_logged = False
             first_user_audio_t = None
+            is_playing_to_browser = False
+            # Prebuffer: accumulate configurable duration before starting playout
+            PREBUFFER_BYTES = int(16000 * 2 * settings.browser_voice_prebuffer_seconds)
+            _first_response = True
 
             async def flush_pending_to_browser() -> None:
-                """Send any whole 40ms frames remaining in pending_audio_24k."""
+                """Resample 24kHz -> 16kHz and feed into the jitter buffer."""
                 nonlocal pending_audio_24k, resample_state
                 while len(pending_audio_24k) >= flush_bytes:
                     chunk = bytes(pending_audio_24k[:flush_bytes])
@@ -174,8 +180,54 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
                         ai_pcm_buf.extend(b"\x00" * (expected_bytes - len(ai_pcm_buf)))
                     ai_pcm_buf.extend(pcm_16k)
 
-                    out_b64 = base64.b64encode(pcm_16k).decode("ascii")
-                    await websocket.send_text(json.dumps({"type": "audio", "data": out_b64}))
+                    browser_16k_queue.extend(pcm_16k)
+
+            async def playout_loop() -> None:
+                """Send audio from the jitter buffer to the browser at 20ms ticks."""
+                nonlocal is_playing_to_browser, _first_response
+                next_wakeup = time.perf_counter()
+                while True:
+                    q_len = len(browser_16k_queue)
+                    if not is_playing_to_browser:
+                        # Start playout when prebuffer is filled or generation ended
+                        if _first_response and q_len > 0:
+                            # First response: start immediately (low latency)
+                            is_playing_to_browser = True
+                            _first_response = False
+                            logger.info("Browser voice: first-response playout ({} bytes) — skipping prebuffer", q_len)
+                        elif q_len >= PREBUFFER_BYTES or (not is_generating and q_len > 0):
+                            is_playing_to_browser = True
+                            _first_response = False
+                            logger.info("Browser voice: jitter buffer filled ({} bytes, gen={}) — starting playout", q_len, is_generating)
+
+                    if is_playing_to_browser and q_len >= chunk_16k_bytes:
+                        chunk = bytes(browser_16k_queue[:chunk_16k_bytes])
+                        del browser_16k_queue[:chunk_16k_bytes]
+                        out_b64 = base64.b64encode(chunk).decode("ascii")
+                        try:
+                            await websocket.send_text(json.dumps({"type": "audio", "data": out_b64}))
+                        except Exception:
+                            return
+                    elif is_playing_to_browser and q_len > 0 and not is_generating:
+                        # End of turn — drain remaining audio
+                        remaining = bytes(browser_16k_queue)
+                        browser_16k_queue.clear()
+                        out_b64 = base64.b64encode(remaining).decode("ascii")
+                        try:
+                            await websocket.send_text(json.dumps({"type": "audio", "data": out_b64}))
+                        except Exception:
+                            return
+                        is_playing_to_browser = False
+                    elif not is_generating and q_len == 0:
+                        is_playing_to_browser = False
+
+                    # Pace at 20ms ticks
+                    next_wakeup += 0.020
+                    sleep_time = next_wakeup - time.perf_counter()
+                    if sleep_time > 0:
+                        await asyncio.sleep(sleep_time)
+                    else:
+                        next_wakeup = time.perf_counter()
 
             async def pump_browser_to_gemini() -> None:
                 while True:
@@ -240,7 +292,9 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
                     if sc.get("interrupted"):
                         logger.info("Browser voice: user barge-in (interrupted)")
                         pending_audio_24k.clear()
-                        resample_state = None
+                        browser_16k_queue.clear()
+                        # Keep resample_state for smooth audio continuity
+                        # (prevents clicks/pops at turn boundaries)
                         is_generating = False
                         last_meaningful_t = time.perf_counter()
                         try:
@@ -285,13 +339,15 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
                     if sc.get("turnComplete") or sc.get("generationComplete"):
                         is_generating = False
                         last_meaningful_t = time.perf_counter()
+                        # Flush any remaining 24kHz audio
                         if pending_audio_24k:
                             chunk = bytes(pending_audio_24k)
                             pending_audio_24k.clear()
                             pcm_16k, resample_state = resample_24k_to_16k_numpy(
                                 chunk, resample_state
                             )
-                            
+                            browser_16k_queue.extend(pcm_16k)
+
                             # Record Final Outbound Chunk
                             elapsed = time.perf_counter() - start_time
                             expected_bytes = int(elapsed * 16000 * 2)
@@ -300,13 +356,6 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
                                 ai_pcm_buf.extend(b"\x00" * (expected_bytes - len(ai_pcm_buf)))
                             ai_pcm_buf.extend(pcm_16k)
 
-                            out_b64 = base64.b64encode(pcm_16k).decode("ascii")
-                            try:
-                                await websocket.send_text(json.dumps({"type": "audio", "data": out_b64}))
-                            except Exception:
-                                return
-                        resample_state = None
-
             async def user_silence_watchdog() -> None:
                 # Disabled — sleep forever so it does not trigger nudges (irritating "are you there" loop)
                 while True:
@@ -314,9 +363,10 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
 
             in_task = asyncio.create_task(pump_browser_to_gemini())
             out_task = asyncio.create_task(pump_gemini_to_browser())
+            playout_task = asyncio.create_task(playout_loop())
             silence_task = asyncio.create_task(user_silence_watchdog())
             _, pending = await asyncio.wait(
-                {in_task, out_task, silence_task},
+                {in_task, out_task, playout_task, silence_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for t in pending:

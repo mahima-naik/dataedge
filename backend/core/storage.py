@@ -14,37 +14,48 @@ from loguru import logger
 
 _DB_PATH: Optional[Path] = None
 _LOCAL = threading.local()
+_db_write_lock = threading.RLock()
 
 
-def _commit_with_retry(conn: sqlite3.Connection, retries: int = 3, delay: float = 0.5) -> None:
+def _commit_with_retry(conn: sqlite3.Connection, retries: int = 5, delay: float = 1.0) -> None:
     """Commit with retry on 'database is locked' errors."""
-    import sqlite3 as _sqlite3
-    for attempt in range(retries):
-        try:
-            conn.commit()
-            return
-        except _sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower() and attempt < retries - 1:
-                logger.warning(f"SQLite locked (attempt {attempt + 1}/{retries}), retrying in {delay}s...")
-                time.sleep(delay)
-                delay *= 2
-            else:
-                raise
+    with _db_write_lock:
+        import sqlite3 as _sqlite3
+        for attempt in range(retries):
+            try:
+                conn.commit()
+                return
+            except _sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < retries - 1:
+                    logger.warning(f"SQLite locked (attempt {attempt + 1}/{retries}), retrying in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    raise
 
 
-def _run_db(fn, retries: int = 3, delay: float = 0.5):
+def _run_db(fn, retries: int = 5, delay: float = 1.0):
     """Run a DB operation (execute + commit) with retry on 'database is locked'."""
-    import sqlite3 as _sqlite3
-    for attempt in range(retries):
-        try:
-            return fn()
-        except _sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower() and attempt < retries - 1:
-                logger.warning(f"SQLite locked in op (attempt {attempt + 1}/{retries}), retrying in {delay}s...")
-                time.sleep(delay)
-                delay *= 2
-            else:
-                raise
+    with _db_write_lock:
+        import sqlite3 as _sqlite3
+        for attempt in range(retries):
+            try:
+                return fn()
+            except _sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < retries - 1:
+                    logger.warning(f"SQLite locked in op (attempt {attempt + 1}/{retries}), retrying in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    try:
+                        _get_conn().rollback()
+                    except Exception:
+                        pass
+                    raise
 
 # Inter-call gap (seconds) between outbound dials.
 _GAP_LEGACY_DEFAULT_SEC = 5.0
@@ -416,10 +427,10 @@ def _get_conn() -> sqlite3.Connection:
         _LOCAL.conn = sqlite3.connect(
             str(_DB_PATH),
             check_same_thread=False,
-            timeout=30.0,
+            timeout=60.0,
         )
         _LOCAL.conn.execute("PRAGMA journal_mode=WAL")
-        _LOCAL.conn.execute("PRAGMA busy_timeout=30000")
+        _LOCAL.conn.execute("PRAGMA busy_timeout=60000")
         _LOCAL.conn.row_factory = sqlite3.Row
         _LOCAL.conn.execute("PRAGMA foreign_keys = ON")
     return _LOCAL.conn
@@ -443,16 +454,18 @@ async def set_campaign_want_running(role: str, wanted: bool) -> None:
     return await asyncio.to_thread(_set_campaign_want_running_sync, role, wanted)
 
 def _set_campaign_want_running_sync(role: str, wanted: bool) -> None:
-    conn = _get_conn()
-    k = campaign_want_running_meta_key(role)
-    if wanted:
-        conn.execute(
-            "INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)",
-            (k, "1"),
-        )
-    else:
-        conn.execute("DELETE FROM app_meta WHERE key = ?", (k,))
-    _commit_with_retry(conn)
+    def _do():
+        conn = _get_conn()
+        k = campaign_want_running_meta_key(role)
+        if wanted:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)",
+                (k, "1"),
+            )
+        else:
+            conn.execute("DELETE FROM app_meta WHERE key = ?", (k,))
+        _commit_with_retry(conn)
+    _run_db(_do)
 
 
 async def roles_with_campaign_run_wanted() -> list[str]:
@@ -486,15 +499,17 @@ async def set_campaign_globally_paused(paused: bool) -> None:
 
 
 def _set_campaign_globally_paused_sync(paused: bool) -> None:
-    conn = _get_conn()
-    if paused:
-        conn.execute(
-            "INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)",
-            (_CAMPAIGN_PAUSED_META, "1"),
-        )
-    else:
-        conn.execute("DELETE FROM app_meta WHERE key = ?", (_CAMPAIGN_PAUSED_META,))
-    _commit_with_retry(conn)
+    def _do():
+        conn = _get_conn()
+        if paused:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_meta(key, value) VALUES (?, ?)",
+                (_CAMPAIGN_PAUSED_META, "1"),
+            )
+        else:
+            conn.execute("DELETE FROM app_meta WHERE key = ?", (_CAMPAIGN_PAUSED_META,))
+        _commit_with_retry(conn)
+    _run_db(_do)
 
 
 async def is_campaign_globally_paused() -> bool:
@@ -543,35 +558,34 @@ async def save_role_state(role: str, prompt: str = None, rag: str = None, vobiz_
     return await asyncio.to_thread(_save_role_state_sync, role, prompt, rag, vobiz_config, delay_sec, greeting_text)
 
 def _save_role_state_sync(role: str, prompt: str = None, rag: str = None, vobiz_config: dict = None, delay_sec: float = None, greeting_text: str = None):
-    conn = _get_conn()
-    role = (role or "sellers").strip().lower()
-    # Ensure a row exists — bare UPDATE silently affects 0 rows if the role was never inserted.
-    conn.execute("INSERT OR IGNORE INTO role_state (role) VALUES (?)", (role,))
-    updates = []
-    params = []
-    if prompt is not None:
-        updates.append("prompt = ?")
-        params.append(prompt)
-    if rag is not None:
-        updates.append("rag = ?")
-        params.append(rag)
-    if vobiz_config is not None:
-        updates.append("vobiz_config = ?")
-        params.append(json.dumps(vobiz_config))
-    if delay_sec is not None:
-        updates.append("delay_sec = ?")
-        params.append(delay_sec)
-    if greeting_text is not None:
-        updates.append("greeting_text = ?")
-        params.append(greeting_text)
-    
-    if not updates:
-        return
-
-    updates.append("updated_at = datetime('now')")
-    params.append(role)
-    conn.execute(f"UPDATE role_state SET {', '.join(updates)} WHERE role = ?", params)
-    _commit_with_retry(conn)
+    def _do():
+        conn = _get_conn()
+        r = (role or "sellers").strip().lower()
+        conn.execute("INSERT OR IGNORE INTO role_state (role) VALUES (?)", (r,))
+        updates = []
+        params = []
+        if prompt is not None:
+            updates.append("prompt = ?")
+            params.append(prompt)
+        if rag is not None:
+            updates.append("rag = ?")
+            params.append(rag)
+        if vobiz_config is not None:
+            updates.append("vobiz_config = ?")
+            params.append(json.dumps(vobiz_config))
+        if delay_sec is not None:
+            updates.append("delay_sec = ?")
+            params.append(delay_sec)
+        if greeting_text is not None:
+            updates.append("greeting_text = ?")
+            params.append(greeting_text)
+        if not updates:
+            return
+        updates.append("updated_at = datetime('now')")
+        params.append(r)
+        conn.execute(f"UPDATE role_state SET {', '.join(updates)} WHERE role = ?", params)
+        _commit_with_retry(conn)
+    _run_db(_do)
 
 
 # --- Leads ---
@@ -683,13 +697,15 @@ async def add_lead(role: str, name: str, phone: str, email: str = "", company: s
     return await asyncio.to_thread(_add_lead_sync, role, name, phone, email, company, details)
 
 def _add_lead_sync(role: str, name: str, phone: str, email: str = "", company: str = "", details: str = "") -> int:
-    conn = _get_conn()
-    cur = conn.execute(
-        "INSERT INTO leads (role, name, phone, email, company, details) VALUES (?, ?, ?, ?, ?, ?)",
-        (role, name, phone, email, company, details)
-    )
-    _commit_with_retry(conn)
-    return cur.lastrowid
+    def _do():
+        conn = _get_conn()
+        cur = conn.execute(
+            "INSERT INTO leads (role, name, phone, email, company, details) VALUES (?, ?, ?, ?, ?, ?)",
+            (role, name, phone, email, company, details)
+        )
+        _commit_with_retry(conn)
+        return cur.lastrowid
+    return _run_db(_do)
 
 
 async def bulk_add_leads(role: str, leads: list[dict]) -> int:
@@ -700,49 +716,46 @@ def _bulk_add_leads_sync(role: str, leads: list[dict]) -> int:
     name/phone/email/company/details/status) into the ``extra`` JSON column so
     the AI can reference them on the call.
     """
-    conn = _get_conn()
-    count = 0
-    # These keys map to dedicated columns; everything else goes into ``extra``
-    # so we never silently drop info the operator uploaded.
-    _RESERVED = {
-        "name", "phone", "email", "company", "details",
-        "status", "role", "id", "extra", "segment",
-    }
-    for lead in leads:
-        phone = lead.get("phone", "").strip()
-        if not phone:
-            continue
-        # Pull any extra fields. Caller may pre-populate ``extra`` as a dict;
-        # otherwise we sweep any keys that aren't reserved.
-        raw_extra = lead.get("extra")
-        if isinstance(raw_extra, dict):
-            extras_dict = {k: v for k, v in raw_extra.items() if v not in (None, "")}
-        else:
-            extras_dict = {
-                k: v for k, v in lead.items()
-                if k not in _RESERVED and v not in (None, "")
-            }
-        # Stringify everything for safe serialization across CSV/Excel cells.
-        extras_dict = {str(k): str(v) for k, v in extras_dict.items() if str(v).strip()}
-        extra_json = json.dumps(extras_dict, ensure_ascii=False) if extras_dict else "{}"
-        conn.execute(
-            "INSERT INTO leads (role, name, phone, email, company, details, extra, segment, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                role,
-                lead.get("name", "Unknown"),
-                phone,
-                lead.get("email", ""),
-                lead.get("company", ""),
-                lead.get("details", ""),
-                extra_json,
-                lead.get("segment", "rfq"),
-                "pending",
+    def _do():
+        conn = _get_conn()
+        count = 0
+        _RESERVED = {
+            "name", "phone", "email", "company", "details",
+            "status", "role", "id", "extra", "segment",
+        }
+        for lead in leads:
+            phone = lead.get("phone", "").strip()
+            if not phone:
+                continue
+            raw_extra = lead.get("extra")
+            if isinstance(raw_extra, dict):
+                extras_dict = {k: v for k, v in raw_extra.items() if v not in (None, "")}
+            else:
+                extras_dict = {
+                    k: v for k, v in lead.items()
+                    if k not in _RESERVED and v not in (None, "")
+                }
+            extras_dict = {str(k): str(v) for k, v in extras_dict.items() if str(v).strip()}
+            extra_json = json.dumps(extras_dict, ensure_ascii=False) if extras_dict else "{}"
+            conn.execute(
+                "INSERT INTO leads (role, name, phone, email, company, details, extra, segment, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    role,
+                    lead.get("name", "Unknown"),
+                    phone,
+                    lead.get("email", ""),
+                    lead.get("company", ""),
+                    lead.get("details", ""),
+                    extra_json,
+                    lead.get("segment", "rfq"),
+                    "pending",
+                )
             )
-        )
-        count += 1
-    _commit_with_retry(conn)
-    return count
+            count += 1
+        _commit_with_retry(conn)
+        return count
+    return _run_db(_do)
 
 
 async def update_lead_status(lead_id: int, status: str, error: str = None, analysis: dict = None, duration_sec: float = None):
@@ -837,22 +850,23 @@ async def promote_due_scheduled_callbacks(now_epoch: float | None = None) -> int
 
 def _promote_due_scheduled_callbacks_sync(now_epoch: float | None = None) -> int:
     """Move leads whose defer-until epoch has passed from ``callback_scheduled`` → ``pending``."""
-
-    t = float(now_epoch if now_epoch is not None else time.time())
-    conn = _get_conn()
-    cur = conn.execute(
-        """
-        UPDATE leads SET status = 'pending',
-               updated_at = datetime('now')
-         WHERE status = 'callback_scheduled'
-           AND json_extract(analysis, '$.callback_reminder_epoch') IS NOT NULL
-           AND CAST(json_extract(analysis, '$.callback_reminder_epoch') AS REAL) > 0
-           AND CAST(json_extract(analysis, '$.callback_reminder_epoch') AS REAL) <= ?
-        """,
-        (t,),
-    )
-    _commit_with_retry(conn)
-    n = int(cur.rowcount or 0)
+    def _do():
+        t = float(now_epoch if now_epoch is not None else time.time())
+        conn = _get_conn()
+        cur = conn.execute(
+            """
+            UPDATE leads SET status = 'pending',
+                   updated_at = datetime('now')
+             WHERE status = 'callback_scheduled'
+               AND json_extract(analysis, '$.callback_reminder_epoch') IS NOT NULL
+               AND CAST(json_extract(analysis, '$.callback_reminder_epoch') AS REAL) > 0
+               AND CAST(json_extract(analysis, '$.callback_reminder_epoch') AS REAL) <= ?
+            """,
+            (t,),
+        )
+        _commit_with_retry(conn)
+        return int(cur.rowcount or 0)
+    n = _run_db(_do)
     if n > 0:
         logger.info(f"Promoted {n} callback_scheduled lead(s) → pending (due recall)")
     return n
@@ -886,18 +900,22 @@ async def reset_leads(role: str):
     return await asyncio.to_thread(_reset_leads_sync, role)
 
 def _reset_leads_sync(role: str):
-    conn = _get_conn()
-    conn.execute("UPDATE leads SET status = 'pending', error = NULL, updated_at = datetime('now') WHERE role = ?", (role,))
-    _commit_with_retry(conn)
+    def _do():
+        conn = _get_conn()
+        conn.execute("UPDATE leads SET status = 'pending', error = NULL, updated_at = datetime('now') WHERE role = ?", (role,))
+        _commit_with_retry(conn)
+    _run_db(_do)
 
 
 async def wipe_leads(role: str):
     return await asyncio.to_thread(_wipe_leads_sync, role)
 
 def _wipe_leads_sync(role: str):
-    conn = _get_conn()
-    conn.execute("DELETE FROM leads WHERE role = ?", (role,))
-    _commit_with_retry(conn)
+    def _do():
+        conn = _get_conn()
+        conn.execute("DELETE FROM leads WHERE role = ?", (role,))
+        _commit_with_retry(conn)
+    _run_db(_do)
 
 
 async def get_lead_counts(role: str) -> dict:
@@ -1181,16 +1199,17 @@ async def mark_callback_processed(row_id: int, role: str) -> bool:
 
 def _mark_callback_processed_sync(row_id: int, role: str) -> bool:
     """Mark a callback as processed so it won't be called again."""
-    from core.state import normalize_console_role
-
-    role = normalize_console_role(role)
-    conn = _get_conn()
-    cur = conn.execute(
-        "UPDATE inbound_callbacks SET status = 'processed' WHERE id = ? AND role = ?",
-        (row_id, role),
-    )
-    _commit_with_retry(conn)
-    return cur.rowcount > 0
+    def _do():
+        from core.state import normalize_console_role
+        r = normalize_console_role(role)
+        conn = _get_conn()
+        cur = conn.execute(
+            "UPDATE inbound_callbacks SET status = 'processed' WHERE id = ? AND role = ?",
+            (row_id, r),
+        )
+        _commit_with_retry(conn)
+        return cur.rowcount > 0
+    return _run_db(_do)
 
 
 async def mark_callback_calling(row_id: int, role: str) -> bool:
@@ -1198,16 +1217,17 @@ async def mark_callback_calling(row_id: int, role: str) -> bool:
 
 def _mark_callback_calling_sync(row_id: int, role: str) -> bool:
     """Mark a callback as currently being called (in progress)."""
-    from core.state import normalize_console_role
-
-    role = normalize_console_role(role)
-    conn = _get_conn()
-    cur = conn.execute(
-        "UPDATE inbound_callbacks SET status = 'calling' WHERE id = ? AND role = ?",
-        (row_id, role),
-    )
-    _commit_with_retry(conn)
-    return cur.rowcount > 0
+    def _do():
+        from core.state import normalize_console_role
+        r = normalize_console_role(role)
+        conn = _get_conn()
+        cur = conn.execute(
+            "UPDATE inbound_callbacks SET status = 'calling' WHERE id = ? AND role = ?",
+            (row_id, r),
+        )
+        _commit_with_retry(conn)
+        return cur.rowcount > 0
+    return _run_db(_do)
 
 
 # --- Sandbox Agents ---
@@ -1577,22 +1597,24 @@ def _mark_schedule_status_sync(
     """Update a schedule's lifecycle status. Returns True if a row changed."""
     if status not in _SCHEDULE_VALID_STATUSES:
         return False
-    conn = _get_conn()
-    sets = ["status = ?", "updated_at = datetime('now')"]
-    params: list = [status]
-    if error is not None:
-        sets.append("error = ?")
-        params.append(error)
-    if started_at is not None:
-        sets.append("started_at = ?")
-        params.append(float(started_at))
-    params.append(schedule_id)
-    cur = conn.execute(
-        f"UPDATE schedules SET {', '.join(sets)} WHERE id = ?",
-        params,
-    )
-    _commit_with_retry(conn)
-    return cur.rowcount > 0
+    def _do():
+        conn = _get_conn()
+        sets = ["status = ?", "updated_at = datetime('now')"]
+        params: list = [status]
+        if error is not None:
+            sets.append("error = ?")
+            params.append(error)
+        if started_at is not None:
+            sets.append("started_at = ?")
+            params.append(float(started_at))
+        params.append(schedule_id)
+        cur = conn.execute(
+            f"UPDATE schedules SET {', '.join(sets)} WHERE id = ?",
+            params,
+        )
+        _commit_with_retry(conn)
+        return cur.rowcount > 0
+    return _run_db(_do)
 
 
 async def due_schedules(now_epoch: float, lookahead_sec: float = 0.0) -> list[dict]:
@@ -1725,37 +1747,38 @@ def _finalize_manual_call_record_sync(
     duration_sec: Optional[float],
     analysis: dict[str, Any],
 ) -> None:
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT id, status FROM manual_calls WHERE camp_id = ?",
-        (camp_id,),
-    ).fetchone()
-    if not row or (row["status"] or "") == "completed":
-        return
-    aj = json.dumps(analysis, ensure_ascii=False)
-    conf = analysis.get("emotion_confidence")
-    try:
-        conf_f = float(conf) if conf is not None and str(conf).strip() != "" else None
-    except (TypeError, ValueError):
-        conf_f = None
-    conn.execute(
-        """
-        UPDATE manual_calls SET
-            log_id = ?,
-            status = 'completed',
-            ended_at = datetime('now'),
-            duration_sec = ?,
-            disposition = ?,
-            summary = ?,
-            next_steps = ?,
-            emotion_label = ?,
-            emotion_rationale = ?,
-            emotion_confidence = ?,
-            analysis_json = ?,
-            updated_at = datetime('now')
-        WHERE camp_id = ?
-        """,
-        (
+    def _do():
+        conn = _get_conn()
+        row = conn.execute(
+            "SELECT id, status FROM manual_calls WHERE camp_id = ?",
+            (camp_id,),
+        ).fetchone()
+        if not row or (row["status"] or "") == "completed":
+            return
+        aj = json.dumps(analysis, ensure_ascii=False)
+        conf = analysis.get("emotion_confidence")
+        try:
+            conf_f = float(conf) if conf is not None and str(conf).strip() != "" else None
+        except (TypeError, ValueError):
+            conf_f = None
+        conn.execute(
+            """
+            UPDATE manual_calls SET
+                log_id = ?,
+                status = 'completed',
+                ended_at = datetime('now'),
+                duration_sec = ?,
+                disposition = ?,
+                summary = ?,
+                next_steps = ?,
+                emotion_label = ?,
+                emotion_rationale = ?,
+                emotion_confidence = ?,
+                analysis_json = ?,
+                updated_at = datetime('now')
+            WHERE camp_id = ?
+            """,
+            (
             log_id or "",
             duration_sec,
             str(analysis.get("disposition") or ""),
@@ -1769,6 +1792,7 @@ def _finalize_manual_call_record_sync(
         ),
     )
     _commit_with_retry(conn)
+    _run_db(_do)
 
 
 async def update_manual_call_analysis_by_id(call_id: int, analysis: dict[str, Any]) -> bool:
@@ -1776,43 +1800,45 @@ async def update_manual_call_analysis_by_id(call_id: int, analysis: dict[str, An
 
 def _update_manual_call_analysis_by_id_sync(call_id: int, analysis: dict[str, Any]) -> bool:
     """Rewrite analyzer fields on a manual_calls row (e.g. Re-analyze button)."""
-    conn = _get_conn()
-    row = conn.execute("SELECT id FROM manual_calls WHERE id = ?", (int(call_id),)).fetchone()
-    if not row:
-        return False
-    aj = json.dumps(analysis, ensure_ascii=False)
-    conf = analysis.get("emotion_confidence")
-    try:
-        conf_f = float(conf) if conf is not None and str(conf).strip() != "" else None
-    except (TypeError, ValueError):
-        conf_f = None
-    conn.execute(
-        """
-        UPDATE manual_calls SET
-            disposition = ?,
-            summary = ?,
-            next_steps = ?,
-            emotion_label = ?,
-            emotion_rationale = ?,
-            emotion_confidence = ?,
-            analysis_json = ?,
-            error = '',
-            updated_at = datetime('now')
-        WHERE id = ?
-        """,
-        (
-            str(analysis.get("disposition") or ""),
-            str(analysis.get("summary") or ""),
-            str(analysis.get("next_steps") or ""),
-            str(analysis.get("emotion_label") or ""),
-            str(analysis.get("emotion_rationale") or ""),
-            conf_f,
-            aj,
-            int(call_id),
-        ),
-    )
-    _commit_with_retry(conn)
-    return True
+    def _do():
+        conn = _get_conn()
+        row = conn.execute("SELECT id FROM manual_calls WHERE id = ?", (int(call_id),)).fetchone()
+        if not row:
+            return False
+        aj = json.dumps(analysis, ensure_ascii=False)
+        conf = analysis.get("emotion_confidence")
+        try:
+            conf_f = float(conf) if conf is not None and str(conf).strip() != "" else None
+        except (TypeError, ValueError):
+            conf_f = None
+        conn.execute(
+            """
+            UPDATE manual_calls SET
+                status = ?,
+                disposition = ?,
+                summary = ?,
+                next_steps = ?,
+                emotion_label = ?,
+                emotion_rationale = ?,
+                emotion_confidence = ?,
+                analysis_json = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                str(analysis.get("disposition") or ""),
+                str(analysis.get("summary") or ""),
+                str(analysis.get("next_steps") or ""),
+                str(analysis.get("emotion_label") or ""),
+                str(analysis.get("emotion_rationale") or ""),
+                conf_f,
+                aj,
+                int(call_id),
+            ),
+        )
+        _commit_with_retry(conn)
+        return True
+    return _run_db(_do)
 
 async def get_manual_call_by_id(call_id: int) -> Optional[dict]:
     return await asyncio.to_thread(_get_manual_call_by_id_sync, call_id)

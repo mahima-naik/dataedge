@@ -3,7 +3,7 @@
 #   cp .env.example .env   # fill GEMINI_API_KEY, VOBIZ_*, etc.
 #   docker compose up --build
 #
-# Host port: use EXPORT_PORT=9000 docker compose up to map host:9000 → container:8000.
+# Host port: use EXPORT_PORT=9000 docker compose up to map host:9000 → container:8001.
 
 services:
   bridge:
@@ -14,10 +14,10 @@ services:
     container_name: vernika-bridge
     restart: unless-stopped
     ports:
-      - "${EXPORT_PORT:-8000}:8000"
+      - "${EXPORT_PORT:-8001}:8001"
     environment:
       HOST: "0.0.0.0"
-      PORT: "8000"
+      PORT: "8001"
       WHATSAPP_PROXY_ENABLED: "${WHATSAPP_PROXY_ENABLED:-0}"
       WHATSAPP_PROXY_URL: "http://whatsapp-proxy:3001"
       WHATSAPP_PROXY_SECRET: "${WHATSAPP_PROXY_SECRET:-}"
@@ -36,7 +36,7 @@ services:
       - "${WHATSAPP_PROXY_PORT:-3001}:3001"
     environment:
       PORT: "3001"
-      FASTAPI_WEBHOOK_URL: "http://bridge:8000/api/whatsapp/proxy/message"
+      FASTAPI_WEBHOOK_URL: "http://bridge:8001/api/whatsapp/proxy/message"
       WHATSAPP_PROXY_SECRET: "${WHATSAPP_PROXY_SECRET:-}"
       WHATSAPP_SESSION_PATH: "/app/whatsapp-session"
     volumes:

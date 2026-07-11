@@ -4,6 +4,7 @@ let liveProcessor = null;
 let liveMicrophone = null;
 let liveNextPlayTime = 0;
 let liveActiveSources = [];
+const JITTER_BUFFER_MS = 100; // 100ms client-side jitter buffer
 
 function resampleTo16k(inputData, fromSampleRate) {
     if (fromSampleRate === 16000) {
@@ -61,11 +62,7 @@ function playLiveResponse(base64) {
 
     const now = liveAudioContext.currentTime;
     if (liveNextPlayTime < now) {
-        if (now - liveNextPlayTime > 0.1) {
-            liveNextPlayTime = now + 0.03; // 30ms startup pre-buffer (reduced from 60ms for lower latency)
-        } else {
-            liveNextPlayTime = now + 0.02; // 20ms tiny gap for minor catch-up
-        }
+        liveNextPlayTime = now + JITTER_BUFFER_MS / 1000;
     }
 
     const source = liveAudioContext.createBufferSource();
