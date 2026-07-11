@@ -459,12 +459,17 @@ async def start_campaign(request: Request):
         _STATE_CACHE.pop(role, None)
         run = _CAMPAIGN_TASKS.get(role)
         if run and not run.done():
+            try:
+                await lead_storage.set_campaign_globally_paused(False)
+            except Exception:
+                pass
             c = await lead_storage.get_lead_counts(role)
             return {
                 "status": "already_running",
                 "active": True,
                 "pending": c.get("pending", 0),
                 "dialing": c.get("dialing", 0),
+                "campaign_paused": False,
             }
         from core.worker import _schedule_preflight
 
@@ -512,14 +517,13 @@ async def stop_campaign(request: Request):
         role = _campaign_role(request)
         _STATE_CACHE.pop(role, None)
         await lead_storage.set_campaign_want_running(role, False)
-        await lead_storage.set_campaign_globally_paused(True)
         if _CAMPAIGN_TASKS.get(role):
             _CAMPAIGN_TASKS[role].cancel()
             _CAMPAIGN_TASKS[role] = None
         if role in _REANALYZE_ALL_PROGRESS:
             _REANALYZE_ALL_PROGRESS[role]["running"] = False
         released = await release_orphaned_dialing_leads(role)
-        return {"status": "stopped", "active": False, "released_dialing": released, "campaign_paused": True}
+        return {"status": "stopped", "active": False, "released_dialing": released, "campaign_paused": False}
     except Exception as e:
         logger.error(f"Stop campaign failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to stop campaign")

@@ -242,13 +242,23 @@ async def _process_callback_batch(role: str) -> int:
                 f"Callback call initiated: {cb_phone} [role_active={active_vobiz_calls_for_role(role)} total={total_active_vobiz_calls()}]"
             )
 
-            await make_vobiz_call(
+            _cb_vobiz_resp = await make_vobiz_call(
                 to=cb_phone,
                 from_=v_from,
                 answer_url=f"{v_base}/vobiz/answer?camp_id={call_id}",
                 auth_id=v_auth_id,
                 auth_token=v_token,
+                extra={
+                    "ring_url": f"{v_base}/vobiz/ring?camp_id={call_id}",
+                    "ring_method": "POST",
+                    "hangup_url": f"{v_base}/vobiz/hangup?camp_id={call_id}",
+                    "hangup_method": "POST",
+                    "hangup_on_ring": "60",
+                },
             )
+            _cb_uuid = _cb_vobiz_resp.get("request_uuid") or ""
+            if _cb_uuid:
+                _CAMPAIGN_DATA[call_id]["_vobiz_call_uuid"] = _cb_uuid
 
             # Wait for call to complete (similar to normal outbound)
             answered = False
@@ -571,13 +581,21 @@ async def _finalize_manual_call_leg(
 
         # Auto-send WhatsApp for manual calls when disposition is Interested
         from services.call_analyzer import canonical_disposition
-        if canonical_disposition(analysis.get("disposition")) == "Interested":
+        canon_disp = canonical_disposition(analysis.get("disposition"))
+        logger.info(
+            "Manual call auto-send check camp_id={} raw_disposition={!r} canonical={!r}",
+            camp_id, analysis.get("disposition"), canon_disp,
+        )
+        if canon_disp == "Interested":
+            logger.info("Manual call Interested, preparing WhatsApp auto-send for camp_id={}", camp_id)
             try:
                 from core.storage import manual_call_row_by_camp_id
                 manual_row = await manual_call_row_by_camp_id(camp_id)
+                logger.info("Manual call auto-send row lookup camp_id={} row_found={}", camp_id, bool(manual_row))
                 if manual_row:
                     manual_phone = (manual_row.get("to_phone") or "").strip()
                     manual_name = (manual_row.get("callee_name") or "").strip()
+                    logger.info("Manual call auto-send phone camp_id={} phone={!r} name={!r}", camp_id, manual_phone, manual_name)
                     if manual_phone:
                         from services.whatsapp_auto_sender import maybe_send_interested_whatsapp
                         _wa_task = asyncio.create_task(
@@ -590,6 +608,7 @@ async def _finalize_manual_call_leg(
                         )
                         _background_tasks.add(_wa_task)
                         _wa_task.add_done_callback(_background_tasks.discard)
+                        logger.info("Manual call auto-send task created camp_id={} phone={!r}", camp_id, manual_phone)
             except Exception as e:
                 logger.warning("Failed to trigger WhatsApp auto-send for manual call {}: {}", camp_id, e)
     finally:
@@ -598,7 +617,20 @@ async def _finalize_manual_call_leg(
 
 async def _campaign_worker_role(role: str):
     """Worker task that dials leads for a specific role (one leg at a time per role)."""
-    logger.info(f"Worker for {role} started.")
+    from core.campaign_hours import is_campaign_quiet_hours, quiet_hours_block_message
+    _in_quiet = is_campaign_quiet_hours()
+    logger.info(
+        "Worker for {} started (quiet_hours={}, time={}).",
+        role,
+        _in_quiet,
+        time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+    )
+    if _in_quiet:
+        logger.warning(
+            "Worker for {} is starting DURING quiet hours — it will stop on first loop iteration. {}",
+            role,
+            quiet_hours_block_message(),
+        )
     await _recover_stale_dialing(role)
 
     empty_since: float | None = None
@@ -608,14 +640,15 @@ async def _campaign_worker_role(role: str):
     while True:
         try:
             if not _CAMPAIGN_TASKS.get(role):
-                logger.info(f"Campaign task cancelled for {role}.")
+                logger.warning("EXIT {}: task slot cleared externally (cancelled by user or shutdown).", role)
                 break
 
             if is_campaign_quiet_hours():
-                logger.info(
-                    "Quiet hours reached for role={} — stopping campaign ({})",
+                _msg = quiet_hours_block_message()
+                logger.warning(
+                    "EXIT {}: quiet hours active — stopping campaign. {}",
                     role,
-                    quiet_hours_block_message(),
+                    _msg,
                 )
                 try:
                     await set_campaign_want_running(role, False)
@@ -657,7 +690,7 @@ async def _campaign_worker_role(role: str):
                     empty_since = time.time()
                     logger.info(f"Queue empty for {role}; waiting up to {_EMPTY_QUEUE_GRACE_SEC}s for new leads.")
                 if time.time() - empty_since >= _EMPTY_QUEUE_GRACE_SEC:
-                    logger.info(f"No pending leads for {role} after grace; stopping campaign.")
+                    logger.warning("EXIT {}: no pending leads after {}s grace — stopping campaign.", role, _EMPTY_QUEUE_GRACE_SEC)
                     try:
                         from core.storage import set_campaign_want_running
                         await set_campaign_want_running(role, False)
@@ -697,10 +730,15 @@ async def _campaign_worker_role(role: str):
             v_auth_id, v_token, v_from, v_base = resolve_vobiz_credentials(role, v_cfg)
 
             if not v_auth_id or not v_token or not v_base or not v_from:
+                _missing = []
+                if not v_auth_id: _missing.append("auth_id")
+                if not v_token: _missing.append("token")
+                if not v_base: _missing.append("base_url")
+                if not v_from: _missing.append("from_number")
                 logger.error(
-                    f"Telephony not configured for role={role}: auth_id={'set' if v_auth_id else 'missing'}, "
-                    f"token={'set' if v_token else 'missing'}, base={'set' if v_base else 'missing'}, "
-                    f"from_number={'set' if v_from else 'missing'}. Stopping campaign."
+                    "EXIT {}: telephony not configured — missing [{}]. Stopping campaign.",
+                    role,
+                    ", ".join(_missing),
                 )
                 await update_lead_status(lead_id, "failed", error="Telephony not configured")
                 _CAMPAIGN_DATA.pop(call_id, None)
@@ -748,18 +786,33 @@ async def _campaign_worker_role(role: str):
                 )
 
                 try:
-                    await make_vobiz_call(
+                    _vobiz_resp = await make_vobiz_call(
                         to=lead_phone, from_=v_from,
                         answer_url=f"{v_base}/vobiz/answer?camp_id={call_id}",
-                        auth_id=v_auth_id, auth_token=v_token
+                        auth_id=v_auth_id, auth_token=v_token,
+                        extra={
+                            "ring_url": f"{v_base}/vobiz/ring?camp_id={call_id}",
+                            "ring_method": "POST",
+                            "hangup_url": f"{v_base}/vobiz/hangup?camp_id={call_id}",
+                            "hangup_method": "POST",
+                            "hangup_on_ring": "60",
+                        },
                     )
+                    _call_uuid = _vobiz_resp.get("request_uuid") or ""
+                    if _call_uuid:
+                        _CAMPAIGN_DATA[call_id]["_vobiz_call_uuid"] = _call_uuid
                 except VobizCallError as ve:
                     logger.error(
                         f"Vobiz refused call to {lead_phone} for {role}: HTTP {ve.status} — {ve.message}"
                     )
                     await update_lead_status(lead_id, "failed", error=f"Vobiz {ve.status}: {ve.message}")
                     if ve.status in (401, 402, 403):
-                        logger.error(f"Halting {role} campaign due to non-recoverable Vobiz status {ve.status}.")
+                        logger.error(
+                            "EXIT {}: non-recoverable Vobiz HTTP {} — halting campaign. "
+                            "Check Vobiz auth token / balance.",
+                            role,
+                            ve.status,
+                        )
                         try:
                             from core.storage import set_campaign_want_running
                             await set_campaign_want_running(role, False)
@@ -851,14 +904,16 @@ async def _campaign_worker_role(role: str):
                 _CAMPAIGN_DATA.pop(call_id, None)
 
             if not _CAMPAIGN_TASKS.get(role):
+                logger.warning("EXIT {}: task slot cleared after call completion.", role)
                 break
 
             gap = inter_call_gap_seconds_for_role(role)
             if not await _cancellable_sleep(role, gap):
+                logger.warning("EXIT {}: inter-call sleep cancelled (shutdown or role change).", role)
                 break
 
         except asyncio.CancelledError:
-            logger.info(f"Worker for {role} cancelled.")
+            logger.warning("EXIT {}: outer loop CancelledError (task.cancel() called).", role)
             break
         except Exception as e:
             logger.exception(f"Worker error for {role}")
@@ -975,8 +1030,17 @@ async def _schedule_preflight(role: str) -> str | None:
     state = get_state(role)
     v_cfg = state.get("vobiz", {}) or {}
     auth_id, auth_token, _from_num, base_url = resolve_vobiz_credentials(role, v_cfg)
-    if not auth_id or not auth_token or not base_url:
-        return "Telephony bridge not configured (Vobiz Auth ID / Token / Public URL missing)."
+    missing = []
+    if not auth_id:
+        missing.append("Auth ID")
+    if not auth_token:
+        missing.append("Auth Token")
+    if not base_url:
+        missing.append("Public URL")
+    if not _from_num:
+        missing.append("From Number")
+    if missing:
+        return f"Telephony bridge not configured ({', '.join(missing)} missing)."
     return None
 
 
