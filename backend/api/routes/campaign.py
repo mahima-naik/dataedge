@@ -42,6 +42,7 @@ from services.call_recording import resolve_session_recording_path
 
 # Global cache for campaign status response to protect event loop/CPU from 4-second frontend polling.
 _STATE_CACHE: dict[str, tuple[float, dict]] = {}
+_MANIFEST_CACHE: dict[str, tuple[float, dict]] = {}
 
 router = APIRouter(prefix="/api/campaign", tags=["campaign"])
 
@@ -214,16 +215,12 @@ async def upload_leads(file: UploadFile = File(...), request: Request = None):
             text_cols = [c for c in cols if c not in (phone_col, email_col)]
             NAME_KEYWORDS = ['name', 'person', 'client', 'buyer', 'seller', 'agent', 'contact', 'lead', 'customer']
             COMPANY_KEYWORDS = ['company', 'business', 'organization', 'org', 'firm', 'brand', 'employer', 'shop', 'store', 'enterprise']
-            if upload_role == "rfqs":
-                COMPANY_KEYWORDS = COMPANY_KEYWORDS + ['buyer', 'customer', 'account', 'organisation', 'organization name']
 
             def _col_matches(col: str, keywords: list) -> bool:
                 cl = col.strip().lower()
                 return any(kw in cl for kw in keywords)
 
             def _bad_for_contact_field(c: str) -> bool:
-                if upload_role == "rfqs" and _is_product_like_column(c):
-                    return True
                 cl = c.strip().lower()
                 if cl in ('city', 'location', 'state', 'district', 'town', 'address', 'region', 'zone', 'branch', 'pincode', 'zip', 'country') or any(tok in cl for tok in ('city', 'address', 'district')):
                     return True
@@ -232,7 +229,7 @@ async def upload_leads(file: UploadFile = File(...), request: Request = None):
                     or _column_values_mostly_row_numbers(col_values.get(c, []))
                 )
 
-            product_cols = {c for c in text_cols if _is_product_like_column(c)} if upload_role == "rfqs" else set()
+            product_cols = set()
 
             name_col = company_col = None
             for c in text_cols:
@@ -362,8 +359,6 @@ async def upload_leads(file: UploadFile = File(...), request: Request = None):
             if not ph:
                 continue
             raw_name = str(r.get(name_col, "") if name_col else "").strip()
-            if role == "rfqs" and (not raw_name or _is_product_like_column(name_col or "")):
-                raw_name = "Unknown"
             
             raw_segment = "rfq"
             if segment_col:
@@ -420,6 +415,7 @@ async def toggle_campaign(request: Request):
     try:
         role = _campaign_role(request)
         _STATE_CACHE.pop(role, None)
+        _MANIFEST_CACHE.pop(role, None)
 
         if _CAMPAIGN_TASKS.get(role) and not _CAMPAIGN_TASKS[role].done():
             await lead_storage.set_campaign_want_running(role, False)
@@ -457,6 +453,7 @@ async def start_campaign(request: Request):
     try:
         role = _campaign_role(request)
         _STATE_CACHE.pop(role, None)
+        _MANIFEST_CACHE.pop(role, None)
         run = _CAMPAIGN_TASKS.get(role)
         if run and not run.done():
             try:
@@ -516,6 +513,7 @@ async def stop_campaign(request: Request):
     try:
         role = _campaign_role(request)
         _STATE_CACHE.pop(role, None)
+        _MANIFEST_CACHE.pop(role, None)
         await lead_storage.set_campaign_want_running(role, False)
         if _CAMPAIGN_TASKS.get(role):
             _CAMPAIGN_TASKS[role].cancel()
@@ -537,6 +535,7 @@ async def stop_all_campaigns(request: Request):
         raise HTTPException(status_code=403, detail="Admin role required to stop all campaigns")
 
     _STATE_CACHE.clear()
+    _MANIFEST_CACHE.clear()
     await lead_storage.set_campaign_globally_paused(True)
     stopped: list[str] = []
     for r in _ROLES:
@@ -564,6 +563,7 @@ async def reset_campaign(request: Request):
     try:
         role = _campaign_role(request)
         _STATE_CACHE.pop(role, None)
+        _MANIFEST_CACHE.pop(role, None)
         reset_leads(role)
         counts = await lead_storage.get_lead_counts(role)
         return {"status": "reset", "count": counts.get("total", 0)}
@@ -793,33 +793,41 @@ async def campaign_reanalyze_all_cancel(request: Request):
 @router.get("/manifest")
 async def campaign_manifest_preview(
     request: Request,
-    limit: int = Query(1500, ge=1, le=20_000, description="Max rows for dashboard Lead Manifest + call list"),
+    limit: int = Query(0, ge=0, description="Max rows for dashboard Lead Manifest + call list (0 = unlimited)"),
 ):
     """Lightweight full-row fetch for UI tables — avoids oversized ``/state`` payloads."""
     role = _campaign_role(request)
+    now = time.time()
+    cache_key = f"{role}:{limit}"
+    if cache_key in _MANIFEST_CACHE:
+        cached_time, cached_val = _MANIFEST_CACHE[cache_key]
+        if now - cached_time < 10.0:
+            return cached_val
     rows = await lead_storage.get_leads(
-        role, limit=min(int(limit), 20_000), order="activity"
+        role, limit=int(limit) if int(limit) > 0 else 9_999_999_999, order="activity"
     )
     enriched = [slim_lead_for_api(dict(r), role=role) for r in rows]
-    return {"role": role, "returned": len(enriched), "leads": enriched}
+    res = {"role": role, "returned": len(enriched), "leads": enriched}
+    _MANIFEST_CACHE[cache_key] = (now, res)
+    return res
 
 
 
 @router.get("/state")
 async def get_campaign_status(
     request: Request,
-    chart_sample_limit: int = Query(800, ge=50, le=5000, description="Sample size for donut/callback charts embedded in state"),
+    chart_sample_limit: int = Query(2000, ge=50, le=10000, description="Sample size for donut/callback charts embedded in state"),
 ):
     try:
         role = _campaign_role(request)
         now = time.time()
         if role in _STATE_CACHE:
             cached_time, cached_val = _STATE_CACHE[role]
-            if now - cached_time < 3.0:
+            if now - cached_time < 10.0:
                 return cached_val
 
         counts = await lead_storage.get_lead_counts(role)
-        sample_cap = min(int(chart_sample_limit), 5000)
+        sample_cap = min(int(chart_sample_limit), 10000)
         chart_rows = await lead_storage.get_leads(role, limit=sample_cap)
         dash = build_campaign_state_dashboard_fields(role, chart_rows)
         chart_leads = [
@@ -845,7 +853,7 @@ async def get_campaign_status(
             
             "chart_sample": chart_leads,
             "leads": chart_leads,
-            "manifest_fetch_hint": {"endpoint": "/api/campaign/manifest", "suggested_limit": min(2500, max(500, sample_cap))},
+            "manifest_fetch_hint": {"endpoint": "/api/campaign/manifest", "suggested_limit": 0},
             "lead_list_truncated": total_in_db > len(chart_leads),
             "leads_returned": len(chart_leads),
             "active_calls": total_active_vobiz_calls(),

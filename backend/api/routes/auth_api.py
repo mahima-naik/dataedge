@@ -21,7 +21,7 @@ class LoginRequest(BaseModel):
 async def login(request: Request, data: LoginRequest):
     email = (data.email or "").strip().lower()
     logger.info(f"Login attempt for: {email}")
-    role = verify_password(email, data.password)
+    role = await verify_password(email, data.password)
     if not role:
         logger.warning(f"Invalid login for: {email}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -32,7 +32,7 @@ async def login(request: Request, data: LoginRequest):
         "role": role,
         "dashboard_role": dashboard_role,
         "email": email,
-        "locked": dashboard_role not in {"buyers", "sellers", "rfqs"},
+        "locked": True,
     }
 
 

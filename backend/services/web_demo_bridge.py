@@ -21,7 +21,7 @@ from services.conversation_log import (
 
 async def handle_web_voice_demo(
     ws: WebSocket,
-    role: str = "sellers",
+    role: str = "data_edge",
     agent_id: Optional[str] = None,
 ) -> None:
     """Bridge Browser <-> Gemini Live.
@@ -86,7 +86,6 @@ async def handle_web_voice_demo(
             gemini_url,
             max_size=2 * 1024 * 1024,
             ping_interval=10,
-            close_timeout=2,
         ) as gws:
             # Setup Config
             setup_msg = {

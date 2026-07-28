@@ -162,7 +162,7 @@ class SIPServer:
 
     def get_public_ip(self) -> str:
         if self.local_ip in ("0.0.0.0", "127.0.0.1"):
-            return "31.97.186.20"
+            return "89.116.122.41"
         return self.local_ip
 
     def handle_invite(self, msg: dict, addr: tuple):

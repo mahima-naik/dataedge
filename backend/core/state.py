@@ -16,16 +16,6 @@ _OPENING_PCM_CACHE: dict[str, tuple[bytes, int]] = {}
 
 _ROLES = (
     "data_edge",
-    "sellers",
-    "buyers",
-    "rfqs",
-    "vernikaai",
-    "real_estate",
-    "maruti",
-    "param_mahindra",
-    "sales_1",
-    "sales_2",
-    "surya_developers",
 )
 
 
@@ -34,8 +24,6 @@ from typing import Optional
 def normalize_console_role(role: Optional[str]) -> str:
     """Ensure the role is valid, defaulting to 'data_edge'."""
     r = (role or "data_edge").lower().strip()
-    if r == "realestate":
-        r = "real_estate"
     return r if r in _ROLES else "data_edge"
 
 
@@ -110,10 +98,6 @@ def try_recover_stale_vobiz_slot(role: str) -> bool:
         if cdata.get("_role") != r:
             continue
         found_any_for_role = True
-        # Only consider manual-call entries for stale recovery
-        if not cdata.get("_manual_leg"):
-            logger.debug("try_recover_stale: camp_id={} is not a manual leg — skipping", cid)
-            continue
         connected = cdata.get("_call_connected_at")
         ended = cdata.get("_call_ended_at")
         if connected is not None and ended is None:
@@ -135,9 +119,16 @@ def try_recover_stale_vobiz_slot(role: str) -> bool:
             break
 
         # No connection — check if the entry has been around long enough to be stale
+        # CRITICAL FIX: Also handle campaign calls (not just manual legs).
+        # A campaign call with no _call_connected_at after 60s is definitely stuck.
         started = cdata.get("_inserted_at") or cdata.get("started_at") or 0
         age_sec = now - started if isinstance(started, (int, float)) else 999
         if age_sec >= 60:
+            logger.warning(
+                "try_recover_stale: camp_id={} age={:.0f}s, connected={} ended={} — "
+                "treating as stale (no WS connected after >=60s)",
+                cid, age_sec, connected, ended,
+            )
             stale_camp_id = cid
             break
 
@@ -171,7 +162,7 @@ def parse_manual_camp_role_suffix(suffix: str) -> tuple[str, str]:
     """
     suf = (suffix or "").strip()
     if not suf:
-        return "sellers", ""
+        return "data_edge", ""
     for r in sorted(_ROLES, key=len, reverse=True):
         if suf == r:
             return r, ""
@@ -206,12 +197,12 @@ def get_state(role: str) -> dict:
     """Get in-memory state for a role (prompt, rag, vobiz config, etc.)."""
     try:
         from core.storage import _get_role_state_sync
-        return _get_role_state_sync(role or "sellers")
+        return _get_role_state_sync(role or "data_edge")
     except Exception as e:
         logger.warning(f"Storage not available, using fallback: {e}")
         from core.storage import default_inter_call_gap_sec
 
-        r = (role or "sellers").strip().lower()
+        r = (role or "data_edge").strip().lower()
         return {
             "role": r,
             "prompt": "",
@@ -219,6 +210,21 @@ def get_state(role: str) -> dict:
             "delay_sec": default_inter_call_gap_sec(r),
             "vobiz": {},
         }
+
+
+async def get_state_async(role: str) -> dict:
+    """Async wrapper — runs the blocking SQLite read in a thread pool."""
+    return await asyncio.to_thread(get_state, role)
+
+
+async def get_leads_async(role: str, status: str = None, limit: int = 500) -> list[dict]:
+    """Async wrapper for get_leads."""
+    return await asyncio.to_thread(get_leads, role, status, limit)
+
+
+async def get_lead_counts_async(role: str) -> dict:
+    """Async wrapper for get_lead_counts."""
+    return await asyncio.to_thread(get_lead_counts, role)
 
 def save_role_state(
     role: str,
@@ -242,6 +248,22 @@ def save_role_state(
         )
     except Exception as e:
         logger.error(f"Failed to save state for {role}: {e}")
+
+
+async def save_role_state_async(
+    role: str,
+    prompt: str = None,
+    rag: str = None,
+    vobiz_config: dict = None,
+    delay_sec: float = None,
+    greeting_text: str = None,
+):
+    """Async wrapper — runs the blocking SQLite write in a thread pool."""
+    await asyncio.to_thread(
+        save_role_state, role,
+        prompt=prompt, rag=rag, vobiz_config=vobiz_config,
+        delay_sec=delay_sec, greeting_text=greeting_text,
+    )
 
 def get_leads(role: str, status: str = None, limit: int = 500) -> list[dict]:
     try:
@@ -302,9 +324,11 @@ def export_leads_csv(role: str, status_filter: str = "all") -> list[dict]:
 from pathlib import Path
 
 def _get_role_path(role: str, subpath: str = None) -> Path:
-    from config import settings
-    # Assuming standard data directory layout
-    base_dir = Path("data") / role
+    # Use the backend directory (derived from this file's location) as the base,
+    # NOT the CWD. The reader (_read_transcript_jsonl in worker.py) also resolves
+    # relative to backend_dir, so paths must match.
+    backend_dir = Path(__file__).resolve().parent.parent  # backend/
+    base_dir = backend_dir / "data" / role
     if subpath:
         base_dir = base_dir / subpath
     base_dir.mkdir(parents=True, exist_ok=True)

@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
-TARGET="${DEPLOY_HOST:-root@31.97.186.20}"
+TARGET="${DEPLOY_HOST:-root@89.116.122.41}"
 REMOTE="${REMOTE_ROOT:-/root/vernika}"
 RUNTIME="${RUNTIME_DIR:-backend}"
 

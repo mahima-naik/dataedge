@@ -6,6 +6,7 @@ import inspect
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     )
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
     app.include_router(ui_router)
     app.include_router(health_router)

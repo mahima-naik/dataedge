@@ -3,7 +3,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-TARGET="${DEPLOY_HOST:-root@31.97.186.20}"
+TARGET="${DEPLOY_HOST:-root@89.116.122.41}"
 REMOTE_DB="${REMOTE_DB:-/root/vernika/backend/data/vernika.db}"
 LOCAL_DB="${ROOT_DIR}/backend/data/vernika.db"
 

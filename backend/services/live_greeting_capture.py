@@ -141,8 +141,7 @@ async def capture_live_greeting_pcm(
         gemini_url,
         max_size=16 * 1024 * 1024,
         ping_interval=20,
-        close_timeout=2,
-        extra_headers=_gem_headers,
+        additional_headers=_gem_headers,
     ) as gem:
         await gem.send(json.dumps(setup))
         try:

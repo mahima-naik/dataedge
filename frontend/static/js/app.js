@@ -217,9 +217,20 @@ document.addEventListener('DOMContentLoaded', () => {
         _initScheduleDefaults();
         loadSchedules();
 
-        setInterval(loadSchedules, 20000);
+        setInterval(loadSchedules, 30000);
         syncState();
-        syncInterval = setInterval(syncState, 4000);
+        syncInterval = setInterval(syncState, 15000);
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
+            } else {
+                if (!syncInterval) {
+                    syncState();
+                    syncInterval = setInterval(syncState, 15000);
+                }
+            }
+        });
 
         const settingsUrlEl = document.getElementById('settings-url');
         if (settingsUrlEl) {
