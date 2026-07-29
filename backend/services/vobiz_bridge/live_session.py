@@ -70,7 +70,8 @@ def _get_static_prompt_blocks(role: str) -> str:
             "data analytics, AI, cyber security, tech paths).\n"
             "NEVER mention Tirupati, Andhra Pradesh, real estate, CPR COSMOS, or property investment.\n"
             "If the user asks your name, say **Priya**.\n"
-            "Your opening line on this call: \"Hi, this is Priya from Data Edge. Got a quick minute?\"\n\n"
+            "The recorded greeting has already played. DO NOT re-introduce yourself or repeat the greeting. "
+            "Wait for the user to respond, then continue the conversation naturally.\n\n"
         ),
     }
     anchor = _PERSONA_ANCHORS.get(role, "")
@@ -1182,6 +1183,7 @@ async def handle_vobiz_ws_live(
             last_in_user = ""
             last_out_assistant = ""
             had_model_audio_turn = False
+            _any_model_audio = False  # Tracks whether ANY turn produced audio (never reset)
             last_rag_inject_key = ""
             activity_end_seq = 0
             # Set once Gemini acknowledges ``setup``; gates all outbound traffic
@@ -1641,6 +1643,7 @@ async def handle_vobiz_ws_live(
                         if len(prior_16k_queue) > 0:
                             continue
                         had_model_audio_turn = True
+                        _any_model_audio = True  # Mark that at least one turn had audio
                         model_generation_active = True
                         latency.on_first_model_audio()
                         if not first_byte_logged:
@@ -2245,8 +2248,8 @@ async def handle_vobiz_ws_live(
                 _task.add_done_callback(_background_tasks.discard)
 
             # Fire-and-forget nudge for scripted-greeting calls: once setupComplete,
-            # send a clientContent turn so Gemini speaks the follow-up immediately
-            # instead of waiting for user audio (which keeps the call alive past ~4s).
+            # send a clientContent turn so Gemini is aware the greeting has played
+            # and can respond naturally when the user speaks.
             async def _continue_after_greeting_nudge() -> None:
                 try:
                     await asyncio.wait_for(gemini_setup_complete.wait(), timeout=10.0)
@@ -2257,7 +2260,7 @@ async def handle_vobiz_ws_live(
                 try:
                     await gem.send(json.dumps({
                         "clientContent": {
-                            "turns": [{"role": "user", "parts": [{"text": "The recorded greeting just played. Now speak to the callee naturally — introduce yourself and start the conversation as instructed."}]}],
+                            "turns": [{"role": "user", "parts": [{"text": "The recorded greeting has been delivered to the callee. The system prompt contains your full instructions. Wait for the user to respond, then continue the conversation naturally as Priya. Do NOT repeat the greeting or re-introduce yourself."}]}],
                             "turnComplete": True,
                         }
                     }))
@@ -2402,7 +2405,7 @@ async def handle_vobiz_ws_live(
                 _total_session_sec = time.perf_counter() - _opening_t0
                 _had_greeting = _prior_opening_bytes_at_connect > 0
                 _setup_ok = gemini_setup_complete.is_set()
-                _had_model_audio = had_model_audio_turn
+                _had_model_audio = _any_model_audio
                 _done_info = []
                 for ft in done:
                     name = ft.get_name()
