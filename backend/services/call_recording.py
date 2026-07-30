@@ -85,13 +85,13 @@ class CallRecorder:
 
     def set_stream_start(self, t: Optional[float] = None) -> None:
         """Set the Vobiz stream start reference time for accurate alignment."""
-        self._stream_start_t = t or time.time()
+        self._stream_start_t = t if t is not None else time.perf_counter()
 
     def add_inbound(self, pcm_s16le_mono: bytes) -> None:
         """Append inbound PCM with timestamp. Lock-free for CPython."""
         if not self._in_path or not pcm_s16le_mono:
             return
-        now = time.time()
+        now = time.perf_counter()
         if self._in_first_write_t is None:
             self._in_first_write_t = now
         # Store as (timestamp, pcm, direction)
@@ -102,7 +102,7 @@ class CallRecorder:
         """Append outbound PCM with timestamp. Lock-free for CPython."""
         if not self._out_path or not pcm_s16le_mono:
             return
-        now = time.time()
+        now = time.perf_counter()
         if self._out_first_write_t is None:
             self._out_first_write_t = now
         # Store as (timestamp, pcm, direction)

@@ -1083,7 +1083,7 @@ async def handle_vobiz_ws_live(
                     vobiz_stream_started.set()
                     vobiz_stream_started_at = time.perf_counter()
                     if call_rec is not None:
-                        call_rec.set_stream_start(time.time())
+                        call_rec.set_stream_start()
                     logger.info(
                         "DIAG: Vobiz stream STARTED call={} stream={} ({}ms after WS accept)",
                         state.call_id,
@@ -1372,7 +1372,7 @@ async def handle_vobiz_ws_live(
                         vobiz_stream_started.set()
                         vobiz_stream_started_at = time.perf_counter()
                         if call_rec is not None:
-                            call_rec.set_stream_start(time.time())
+                            call_rec.set_stream_start()
                         logger.info(
                             "DIAG: Vobiz stream STARTED (non-scripted path) call={} stream={} ({}ms after WS accept)",
                             state.call_id,
