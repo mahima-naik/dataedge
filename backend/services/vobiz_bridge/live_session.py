@@ -1804,6 +1804,8 @@ async def handle_vobiz_ws_live(
                                 chunk, gemini_resample_state
                             )
                             gemini_16k_queue.extend(pcm_16k)
+                            if call_rec is not None:
+                                call_rec.add_outbound(pcm_16k)
 
                     if sc.get("turnComplete") or sc.get("generationComplete"):
                         latency.on_turn_complete()
@@ -1854,6 +1856,8 @@ async def handle_vobiz_ws_live(
                                 chunk, gemini_resample_state
                             )
                             gemini_16k_queue.extend(pcm_16k)
+                            if call_rec is not None:
+                                call_rec.add_outbound(pcm_16k)
                         elif len(prior_16k_queue) > 0 and pending_audio_24k:
                             pending_audio_24k.clear()
                         # Clear the prefetch cache at turn boundary: next utterance has a new query.
@@ -2038,9 +2042,6 @@ async def handle_vobiz_ws_live(
                         bg_pos,
                         len(gemini_pcm) // 2 if gemini_pcm else chunk_samples,
                     )
-                    # Record individual frame to call_recorder, then batch for WS send
-                    if call_rec is not None:
-                        call_rec.add_outbound(mixed)
                     _outbuf.extend(mixed)
                     now = time.perf_counter()
                     if len(_outbuf) >= _BATCH_BYTES or (now >= _next_flush and _outbuf):
