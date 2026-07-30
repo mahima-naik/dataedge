@@ -768,8 +768,20 @@ async def get_conversation_log(date: str, log_id: str):
 
 @router.get("/api/recordings/{date}/{filename}")
 async def get_recording(date: str, filename: str):
-    rec_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "logs", date, filename)
-    if os.path.exists(rec_path):
-        media_type = "audio/mpeg" if filename.endswith(".mp3") else "audio/wav"
-        return FileResponse(rec_path, media_type=media_type)
+    # Check multiple recording directories
+    from config import settings
+    import pathlib
+    
+    search_dirs = [
+        os.path.join(pathlib.Path(__file__).resolve().parent.parent.parent, "data", "recordings", date),
+        settings.call_recording_dir,
+        os.path.join(pathlib.Path(__file__).resolve().parent.parent.parent, "data", "call_recordings", date),
+    ]
+    
+    for base_dir in search_dirs:
+        rec_path = os.path.join(base_dir, date, filename) if date not in base_dir else os.path.join(base_dir, filename)
+        if os.path.exists(rec_path):
+            media_type = "audio/mpeg" if filename.endswith(".mp3") else "audio/wav"
+            return FileResponse(rec_path, media_type=media_type)
+    
     raise HTTPException(404, "Recording not found")

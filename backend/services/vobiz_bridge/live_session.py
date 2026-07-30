@@ -113,37 +113,65 @@ def _get_static_prompt_blocks(role: str) -> str:
 
 
 class LatencyTracker:
-    """Lightweight per-turn latency instrumentation for Gemini Live voice pipeline.
+    """Per-turn latency instrumentation for Gemini Live voice pipeline.
 
-    Tracks timestamps for each pipeline stage and logs a summary when the turn completes.
-    All times are ``time.perf_counter()`` for high-resolution monotonic measurement.
+    Tracks timestamps for each pipeline stage and logs a detailed summary
+    when the turn completes. All times are ``time.perf_counter()`` for
+    high-resolution monotonic measurement.
+
+    Pipeline stages tracked:
+      1. user_speech_start  — first user audio frame received
+      2. user_speech_end    — activityEnd (user stopped speaking)
+      3. gemini_forwarded   — audio forwarded to Gemini Live WS
+      4. stt_text           — first STT transcription received
+      5. activity_end       — Gemini activityEnd (turn boundary)
+      6. first_model_audio  — first audio chunk from Gemini model
+      7. first_vobiz_send   — first audio sent to Vobiz handset
+      8. turn_complete      — turnComplete / generationComplete
     """
 
     __slots__ = (
-        "_turn_start", "_audio_received", "_gemini_forwarded",
+        "_turn_start", "_user_speech_start", "_user_speech_end",
+        "_audio_received", "_gemini_forwarded",
         "_stt_text", "_activity_end", "_first_model_audio",
-        "_first_vobiz_send", "_turn_logged",
+        "_first_vobiz_send", "_turn_complete", "_turn_logged",
+        "_all_turns",
     )
 
     def __init__(self) -> None:
         self._turn_start: float = 0.0
+        self._user_speech_start: float = 0.0
+        self._user_speech_end: float = 0.0
         self._audio_received: float = 0.0
         self._gemini_forwarded: float = 0.0
         self._stt_text: float = 0.0
         self._activity_end: float = 0.0
         self._first_model_audio: float = 0.0
         self._first_vobiz_send: float = 0.0
+        self._turn_complete: float = 0.0
         self._turn_logged: bool = True
+        self._all_turns: list[dict] = []
 
     def on_turn_start(self) -> None:
         self._turn_start = time.perf_counter()
+        self._user_speech_start = 0.0
+        self._user_speech_end = 0.0
         self._audio_received = 0.0
         self._gemini_forwarded = 0.0
         self._stt_text = 0.0
         self._activity_end = 0.0
         self._first_model_audio = 0.0
         self._first_vobiz_send = 0.0
+        self._turn_complete = 0.0
         self._turn_logged = False
+
+    def on_user_speech_start(self) -> None:
+        if not self._user_speech_start:
+            self._user_speech_start = time.perf_counter()
+
+    def on_user_speech_end(self) -> None:
+        if not self._user_speech_end:
+            self._user_speech_end = time.perf_counter()
 
     def on_audio_received(self) -> None:
         if not self._audio_received:
@@ -169,6 +197,10 @@ class LatencyTracker:
         if not self._first_vobiz_send:
             self._first_vobiz_send = time.perf_counter()
 
+    def on_turn_complete(self) -> None:
+        if not self._turn_complete:
+            self._turn_complete = time.perf_counter()
+
     def log_turn_summary(self, logger_ref) -> None:
         if self._turn_logged:
             return
@@ -180,17 +212,60 @@ class LatencyTracker:
         def _ms(t: float) -> float:
             return (t - ts) * 1000.0 if t > 0 else -1.0
         total = (now - ts) * 1000.0
+
+        # Calculate key deltas for diagnostics
+        stt_to_activity = _ms(self._activity_end) - _ms(self._stt_text) if self._stt_text > 0 and self._activity_end > 0 else -1
+        activity_to_model = _ms(self._first_model_audio) - _ms(self._activity_end) if self._activity_end > 0 and self._first_model_audio > 0 else -1
+        model_to_vobiz = _ms(self._first_vobiz_send) - _ms(self._first_model_audio) if self._first_model_audio > 0 and self._first_vobiz_send > 0 else -1
+        e2e_response = _ms(self._first_vobiz_send) - _ms(self._user_speech_end) if self._user_speech_end > 0 and self._first_vobiz_send > 0 else -1
+
+        turn_data = {
+            "total_ms": round(total, 1),
+            "user_speech_start_ms": round(_ms(self._user_speech_start), 1),
+            "user_speech_end_ms": round(_ms(self._user_speech_end), 1),
+            "audio_rx_ms": round(_ms(self._audio_received), 1),
+            "fwd_to_gemini_ms": round(_ms(self._gemini_forwarded), 1),
+            "stt_text_ms": round(_ms(self._stt_text), 1),
+            "activity_end_ms": round(_ms(self._activity_end), 1),
+            "model_audio_ms": round(_ms(self._first_model_audio), 1),
+            "vobiz_tx_ms": round(_ms(self._first_vobiz_send), 1),
+            "turn_complete_ms": round(_ms(self._turn_complete), 1),
+            "stt_to_activity_ms": round(stt_to_activity, 1),
+            "activity_to_model_ms": round(activity_to_model, 1),
+            "model_to_vobiz_ms": round(model_to_vobiz, 1),
+            "e2e_response_ms": round(e2e_response, 1),
+        }
+        self._all_turns.append(turn_data)
+
         logger_ref.info(
-            "LATENCY | total={:.0f}ms | audio_rx={:.0f}ms fwd={:.0f}ms stt={:.0f}ms "
-            "activity_end={:.0f}ms model_audio={:.0f}ms vobiz_tx={:.0f}ms",
+            "LATENCY | total={:.0f}ms | user_end={:.0f}ms stt={:.0f}ms "
+            "activity_end={:.0f}ms model_audio={:.0f}ms vobiz_tx={:.0f}ms "
+            "| e2e_response={:.0f}ms (user_end→vobiz_tx) "
+            "| stt→activity={:.0f}ms activity→model={:.0f}ms model→vobiz={:.0f}ms",
             total,
-            _ms(self._audio_received),
-            _ms(self._gemini_forwarded),
+            _ms(self._user_speech_end),
             _ms(self._stt_text),
             _ms(self._activity_end),
             _ms(self._first_model_audio),
             _ms(self._first_vobiz_send),
+            e2e_response,
+            stt_to_activity,
+            activity_to_model,
+            model_to_vobiz,
         )
+
+    def get_call_summary(self) -> dict:
+        """Return full latency summary for the entire call."""
+        if not self._all_turns:
+            return {"turns": 0}
+        e2e_values = [t["e2e_response_ms"] for t in self._all_turns if t["e2e_response_ms"] > 0]
+        return {
+            "turns": len(self._all_turns),
+            "avg_e2e_response_ms": round(sum(e2e_values) / len(e2e_values), 1) if e2e_values else 0,
+            "max_e2e_response_ms": round(max(e2e_values), 1) if e2e_values else 0,
+            "min_e2e_response_ms": round(min(e2e_values), 1) if e2e_values else 0,
+            "turns_data": self._all_turns,
+        }
 
 async def handle_vobiz_ws_live(
     ws: WebSocket,
@@ -514,10 +589,47 @@ async def handle_vobiz_ws_live(
             "Use your inbound service-desk greeting and help with their enquiry.\n\n"
         )
 
+    # Extract OPENING CONVERSATION FLOW section from prompt to place at the very top.
+    # This ensures Gemini follows the step-by-step opening flow before any persona rules.
+    _opening_flow_extracted = ""
+    _opening_flow_patterns = [
+        ("OPENING CONVERSATION FLOW", "RULES:\n- Continue with the existing conversation flow"),
+        ("Opening Greeting:", "RULES:\n- Continue with the existing conversation flow"),
+    ]
+    for _start_marker, _end_marker in _opening_flow_patterns:
+        _of_start = system_prompt.find(_start_marker)
+        if _of_start >= 0:
+            # Find the dashed line before
+            _dash_pos = system_prompt.rfind("-" * 20, 0, _of_start)
+            if _dash_pos >= 0:
+                _line_start = system_prompt.rfind("\n", 0, _dash_pos)
+                _of_start = _line_start + 1 if _line_start >= 0 else _dash_pos
+            # Find the end marker
+            _of_end = system_prompt.find(_end_marker, _of_start + len(_start_marker))
+            if _of_end >= 0:
+                _of_end = system_prompt.find("\n", _of_end + len(_end_marker))
+                if _of_end < 0:
+                    _of_end = len(system_prompt)
+            else:
+                _of_end = system_prompt.find("\n---", _of_start + 10)
+                if _of_end < 0:
+                    _of_end = min(_of_start + 3000, len(system_prompt))
+            _opening_flow_extracted = system_prompt[_of_start:_of_end].strip()
+            # Remove from original position
+            system_prompt = system_prompt[:_of_start].strip() + "\n" + system_prompt[_of_end:].strip()
+            logger.info("Extracted OPENING FLOW section ({} chars) to top of prompt", len(_opening_flow_extracted))
+            break
+
     if static_blocks.startswith("[ANCHOR"):
-        system_prompt = static_blocks + inbound_block + case_block + system_prompt + detail_block
+        system_prompt = (
+            (_opening_flow_extracted + "\n\n" if _opening_flow_extracted else "")
+            + static_blocks + inbound_block + case_block + system_prompt + detail_block
+        )
     else:
-        system_prompt = inbound_block + static_blocks + case_block + system_prompt + detail_block
+        system_prompt = (
+            (_opening_flow_extracted + "\n\n" if _opening_flow_extracted else "")
+            + inbound_block + static_blocks + case_block + system_prompt + detail_block
+        )
 
     # Truncate overly long system prompts to reduce model inference latency.
     # 4000 chars ≈ 1000 tokens — sufficient for persona + rules + context.
@@ -669,7 +781,7 @@ async def handle_vobiz_ws_live(
     greeting_phase_end_t: float = 0.0
     # Grace period after greeting ends to suppress user audio (prevents VAD deadlock
     # if user says "Hello?" right as greeting finishes)
-    GREETING_PHASE_GRACE_SEC: float = 1.5
+    GREETING_PHASE_GRACE_SEC: float = 0.8
 
     def _in_greeting_phase() -> bool:
         """Return True if we're still in the greeting phase (greeting active or grace period)."""
@@ -776,33 +888,43 @@ async def handle_vobiz_ws_live(
                 "yourself again. Wait for the customer, then continue naturally.\n"
             )
     elif gemini_live_first and opening_line:
-        system_prompt += (
-            "\n\n[OPENING — YOUR FIRST SPOKEN UTTERANCE ON THIS CALL]\n"
-            "You begin the conversation now. Your first audible reply must follow this scripted "
-            "opening faithfully (adapt only pacing and natural delivery in the caller's language; "
-            "keep names and factual content).\n\""
-            + opening_line
-            + "\""
-        )
+        # When the prompt already contains a detailed opening flow section,
+        # do NOT add the [OPENING] override — it conflicts with the prompt's
+        # step-by-step instructions (e.g. introduce Data Edge first, then ask).
+        # Only add a minimal reminder to follow the prompt's opening flow.
+        if _opening_flow_extracted:
+            system_prompt += (
+                "\n\n[CRITICAL — FOLLOW THE OPENING FLOW AT THE TOP OF THIS PROMPT]\n"
+                "The call is now connected. You MUST follow these steps IN ORDER:\n"
+                "1. Say your greeting exactly as written in the OPENING section above.\n"
+                "2. Wait for the user to acknowledge (e.g. 'yes', 'sure', 'haan').\n"
+                "3. THEN introduce Data Edge and mention courses in ONE sentence.\n"
+                "4. PAUSE and wait for user response.\n"
+                "5. THEN ask 'Are you currently studying or working?'\n"
+                "Do NOT skip steps 2-3. Do NOT ask 'studying or working' before introducing Data Edge.\n"
+            )
+        else:
+            system_prompt += (
+                "\n\n[OPENING — YOUR FIRST SPOKEN UTTERANCE ON THIS CALL]\n"
+                "You begin the conversation now. Your first audible reply must follow this scripted "
+                "opening faithfully (adapt only pacing and natural delivery in the caller's language; "
+                "keep names and factual content).\n\""
+                + opening_line
+                + "\""
+            )
     elif gemini_live_first:
-        _live_first_hints = {
-            "data_edge": (
-                "[OPENING — YOUR FIRST SPOKEN UTTERANCE ON THIS CALL]\n"
-                "You begin as **Priya**, career counselor at **Data Edge** (say exactly): "
-                "\"Hi, this is Priya from Data Edge. I'm a career counselor — got a quick minute?\" "
-                "— then continue per your persona. Never mention Tirupati or real estate.\n"
-            ),
-        }
-        hint = _live_first_hints.get(role)
-        system_prompt += (
-            f"\n\n{hint}"
-            if hint
-            else (
+        # No opening_line available — use prompt's opening flow or minimal hint
+        if _opening_flow_extracted:
+            system_prompt += (
+                "\n\n[CRITICAL — FOLLOW THE OPENING FLOW AT THE TOP OF THIS PROMPT]\n"
+                "The call is now connected. Follow the OPENING section at the top exactly.\n"
+            )
+        else:
+            system_prompt += (
                 "\n\n[OPENING — YOUR FIRST SPOKEN UTTERANCE ON THIS CALL]\n"
                 "You begin the conversation now with one short warm, professional greeting, "
                 "then continue per your persona.\n"
             )
-        )
     elif opening_line:
         logger.warning("No pre-warmed audio found for start of call. Forcing Gemini to initiate.")
         system_prompt += (
@@ -960,14 +1082,16 @@ async def handle_vobiz_ws_live(
                     )
                     vobiz_stream_started.set()
                     vobiz_stream_started_at = time.perf_counter()
+                    if call_rec is not None:
+                        call_rec.set_stream_start(time.time())
                     logger.info(
                         "DIAG: Vobiz stream STARTED call={} stream={} ({}ms after WS accept)",
                         state.call_id,
                         state.stream_id,
                         int((vobiz_stream_started_at - _opening_t0) * 1000),
                     )
-
-                    if inbound_role and not inbound_script_cb_recorded:
+ 
+                     if inbound_role and not inbound_script_cb_recorded:
                         inbound_script_cb_recorded = True
                         try:
                             from core.state import _CAMPAIGN_TASKS, normalize_console_role
@@ -1247,6 +1371,8 @@ async def handle_vobiz_ws_live(
                         )
                         vobiz_stream_started.set()
                         vobiz_stream_started_at = time.perf_counter()
+                        if call_rec is not None:
+                            call_rec.set_stream_start(time.time())
                         logger.info(
                             "DIAG: Vobiz stream STARTED (non-scripted path) call={} stream={} ({}ms after WS accept)",
                             state.call_id,
@@ -1320,6 +1446,7 @@ async def handle_vobiz_ws_live(
                             continue
 
                         latency.on_gemini_forwarded()
+                        latency.on_user_speech_start()
                         # Forward base64 directly to Gemini — avoids decode+re-encode overhead (~5ms/frame).
                         # Gate on setupComplete so we never send audio before the session is configured.
                         if not gemini_setup_complete.is_set():
@@ -1546,6 +1673,7 @@ async def handle_vobiz_ws_live(
                                 (it.get("text") or "")[:60],
                             )
                         latency.on_stt_text()
+                        latency.on_turn_start()
                         logger.info("Gemini Live STT: {!r}", last_in_user)
                         # Prefetch RAG while the user is still speaking so the context is
                         # ready at activityEnd — no SQLite on the critical path.
@@ -1564,6 +1692,7 @@ async def handle_vobiz_ws_live(
                         first_byte_logged = False
                         turn_model_bytes = 0
                         latency.on_activity_end()
+                        latency.on_user_speech_end()
                         if live_rag_context and len(prior_16k_queue) == 0:
                             activity_end_seq += 1
                             seq_captured = activity_end_seq
@@ -1677,6 +1806,7 @@ async def handle_vobiz_ws_live(
                             gemini_16k_queue.extend(pcm_16k)
 
                     if sc.get("turnComplete") or sc.get("generationComplete"):
+                        latency.on_turn_complete()
                         last_meaningful_t = time.perf_counter()
                         if turn_model_bytes == 0:
                             logger.warning(
@@ -1813,11 +1943,11 @@ async def handle_vobiz_ws_live(
                 # Last sample value for hold-last-sample technique (prevents clicks/pops from silence padding)
                 _hold_l: int = 0  # left channel (mono = uses left)
                 
-                # Batched send: accumulate 8 frames (160 ms) then send as one WS message.
+                # Batched send: accumulate 4 frames (80 ms) then send as one WS message.
                 # On a 2-core VPS each ws.send_text() blocks ~280 ms; batching cuts
-                # 50 sends/sec down to ~6 sends/sec.
+                # 50 sends/sec down to ~12 sends/sec. Reduced from 8 to 4 for lower latency.
                 _outbuf = bytearray()
-                _BATCH_FRAMES = 8
+                _BATCH_FRAMES = 4
                 _BATCH_BYTES = chunk_bytes * _BATCH_FRAMES
                 _flush_interval = 0.02 * _BATCH_FRAMES
                 _next_flush = time.perf_counter()
@@ -2080,6 +2210,7 @@ async def handle_vobiz_ws_live(
             # Diagnostic: warn if setupComplete not received within 8s
             # Also actively triggers TTS fallback and eventually terminates the call.
             async def _setup_complete_watchdog() -> None:
+                nonlocal fallback_tts_played
                 try:
                     await asyncio.wait_for(gemini_setup_complete.wait(), timeout=8.0)
                     return  # setupComplete arrived — all good
@@ -2461,6 +2592,34 @@ async def handle_vobiz_ws_live(
             logger.info("Released vobiz call slot for camp_id={} role={}", camp_id, role)
         if call_rec is not None:
             try:
+                # Log call latency summary before closing recording
+                call_summary = latency.get_call_summary()
+                if call_summary.get("turns", 0) > 0:
+                    logger.info(
+                        "CALL_LATENCY_SUMMARY | turns={} avg_e2e={}ms max_e2e={}ms min_e2e={}ms camp={}",
+                        call_summary["turns"],
+                        call_summary.get("avg_e2e_response_ms", 0),
+                        call_summary.get("max_e2e_response_ms", 0),
+                        call_summary.get("min_e2e_response_ms", 0),
+                        camp_id,
+                    )
+                    for i, t in enumerate(call_summary.get("turns_data", []), 1):
+                        logger.info(
+                            "CALL_LATENCY_TURN {} | total={}ms user_end={}ms stt={}ms "
+                            "activity={}ms model_audio={}ms vobiz_tx={}ms "
+                            "e2e_response={}ms stt→act={}ms act→model={}ms model→vobiz={}ms",
+                            i,
+                            t["total_ms"],
+                            t["user_speech_end_ms"],
+                            t["stt_text_ms"],
+                            t["activity_end_ms"],
+                            t["model_audio_ms"],
+                            t["vobiz_tx_ms"],
+                            t["e2e_response_ms"],
+                            t["stt_to_activity_ms"],
+                            t["activity_to_model_ms"],
+                            t["model_to_vobiz_ms"],
+                        )
                 call_rec.close()
             except Exception as exc:
                 logger.warning("Call recorder close failed: {}", exc)

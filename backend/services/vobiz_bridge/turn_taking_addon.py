@@ -11,6 +11,14 @@ This is a live voice call over the phone — be warm, natural, and conversationa
 Speak in clear 1–2 sentence turns. Complete your question or thought before yielding.
 If the callee speaks while you are talking, yield politely and listen to their response.
 Always keep the conversation going naturally by asking a relevant follow-up question.
+
+IMPORTANT TURN-TAKING RULES:
+1. When you hear the user start speaking, STOP talking immediately — do not finish your sentence.
+2. Wait for the user to complete their thought before responding.
+3. After the user speaks, respond naturally without repeating what they said.
+4. Keep your responses concise (2-3 sentences max) to maintain natural conversation flow.
+5. If the user interrupts, gracefully yield and address their new input.
+6. Never speak over the user — this creates confusion and poor audio quality.
 """
 
 

@@ -553,21 +553,46 @@ async def _finalize_manual_call_leg(
                 "emotion_confidence": None,
             }
         else:
-            try:
-                from services.call_analyzer import analyze_call_transcript
-
-                analysis = await analyze_call_transcript(transcript)
-            except Exception as e:
-                logger.exception("Manual call analyzer failed: {}", e)
+            _has_user_turn = False
+            for _line in transcript.strip().splitlines():
+                try:
+                    import json as _json
+                    _rec = _json.loads(_line)
+                    if _rec.get("role") == "user":
+                        _has_user_turn = True
+                        break
+                except Exception:
+                    continue
+            if not _has_user_turn:
+                logger.info(
+                    "Manual call transcript has no user turns — skipping conversation analysis (camp={})",
+                    camp_id,
+                )
                 analysis = {
-                    "summary": f"Analyzer error: {e}",
+                    "summary": "Call connected but no user speech was captured. The call may have been answered but no conversation took place.",
                     "rating": 0,
                     "next_steps": "Retry later",
                     "disposition": "Answered",
                     "emotion_label": "Unknown",
-                    "emotion_rationale": "",
+                    "emotion_rationale": "No user speech in transcript.",
                     "emotion_confidence": None,
                 }
+            else:
+                try:
+                    from services.call_analyzer import analyze_call_transcript
+
+                    analysis = await analyze_call_transcript(transcript)
+                except Exception as e:
+                    logger.exception("Manual call analyzer failed: {}", e)
+                    analysis = {
+                        "summary": f"Analyzer error: {e}",
+                        "rating": 0,
+                        "next_steps": "Retry later",
+                        "disposition": "Answered",
+                        "emotion_label": "Unknown",
+                        "emotion_rationale": "",
+                        "emotion_confidence": None,
+                    }
 
         from services.transcript_interest import apply_interest_disposition_override
         analysis = apply_interest_disposition_override(analysis, transcript)

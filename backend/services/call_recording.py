@@ -1,8 +1,14 @@
-"""Optional per-call 16 kHz mono WAV (inbound + outbound + mixed) for Vobiz WebSocket calls."""
+"""Optional per-call 16 kHz mono WAV (inbound + outbound + mixed) for Vobiz WebSocket calls.
+
+FIX: Sequential interleaved recording — inbound (user) and outbound (AI) chunks are
+tagged with wall-clock timestamps and interleaved during close() so the mixed WAV
+plays the conversation in chronological order (user question → AI answer → user question).
+"""
 
 from __future__ import annotations
 
 import audioop
+import struct
 import threading
 import wave
 import subprocess
@@ -17,6 +23,10 @@ from config import settings
 
 import time
 
+_SR = 16000
+_BPS = 2  # bytes per sample (s16le)
+
+
 def _safe_stem(s: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in s)[:180]
 
@@ -28,9 +38,12 @@ def _day_dir(base_dir: Optional[str] = None) -> Path:
 
 
 class CallRecorder:
-    """Appends 16 kHz s16le mono PCM to in-memory buffers; writes WAV/MP3 on close.
-    This prevents synchronous file-system writes from blocking the main event loop
-    and causing audio packet delays (voice cracking) on low-resource hosts.
+    """Appends 16 kHz s16le mono PCM to timestamped in-memory buffers;
+    writes WAV/MP3 on close with sequential interleaved mixing.
+
+    Each ``add_inbound`` / ``add_outbound`` call records the PCM along with
+    ``time.time()``. During ``close()``, chunks are interleaved by timestamp
+    so the mixed WAV plays the conversation in natural order.
     """
 
     def __init__(self, session_id: str, *, channel: str, base_dir: Optional[str] = None) -> None:
@@ -39,13 +52,15 @@ class CallRecorder:
         self._lock = threading.Lock()
         self._in_path: Optional[str] = None
         self._out_path: Optional[str] = None
-        self._in_buffer = bytearray()
-        self._out_buffer = bytearray()
+        # Timestamped chunks: list of (timestamp, pcm_bytes, direction)
+        self._chunks: list[tuple[float, bytes, str]] = []
         self._start_time: float = time.time()
         self._in_written = 0
         self._out_written = 0
         self._in_first_write_t: Optional[float] = None
         self._out_first_write_t: Optional[float] = None
+        # Reference time: set to Vobiz stream start for accurate alignment
+        self._stream_start_t: Optional[float] = None
 
         if not settings.call_recording_enabled:
             return
@@ -68,105 +83,99 @@ class CallRecorder:
             self._out_path,
         )
 
+    def set_stream_start(self, t: Optional[float] = None) -> None:
+        """Set the Vobiz stream start reference time for accurate alignment."""
+        self._stream_start_t = t or time.time()
+
     def add_inbound(self, pcm_s16le_mono: bytes) -> None:
-        """Append inbound PCM. Lock-free for CPython (bytearray.extend is thread-safe
-        at the C level). Silence padding is deferred to close() to avoid per-chunk overhead."""
+        """Append inbound PCM with timestamp. Lock-free for CPython."""
         if not self._in_path or not pcm_s16le_mono:
             return
+        now = time.time()
         if self._in_first_write_t is None:
-            self._in_first_write_t = time.time()
-        self._in_buffer.extend(pcm_s16le_mono)
+            self._in_first_write_t = now
+        # Store as (timestamp, pcm, direction)
+        self._chunks.append((now, pcm_s16le_mono, "in"))
         self._in_written += len(pcm_s16le_mono)
 
     def add_outbound(self, pcm_s16le_mono: bytes) -> None:
-        """Append outbound PCM. Lock-free for CPython."""
+        """Append outbound PCM with timestamp. Lock-free for CPython."""
         if not self._out_path or not pcm_s16le_mono:
             return
+        now = time.time()
         if self._out_first_write_t is None:
-            self._out_first_write_t = time.time()
-        self._out_buffer.extend(pcm_s16le_mono)
+            self._out_first_write_t = now
+        # Store as (timestamp, pcm, direction)
+        self._chunks.append((now, pcm_s16le_mono, "out"))
         self._out_written += len(pcm_s16le_mono)
 
     def close(self) -> None:
         if self._in_path or self._out_path:
             logger.info(
-                "Call recording: closed channel={} session={} (flushing buffers to background thread)",
+                "Call recording: closed channel={} session={} (flushing {} chunks to background thread)",
                 self._channel,
                 self._session_id,
+                len(self._chunks),
             )
-            threading.Thread(target=self._write_mixed_wav, daemon=True).start()
+            threading.Thread(target=self._write_recording_wav, daemon=True).start()
 
-    def _write_mixed_wav(self) -> None:
-        """Mix inbound (caller) + outbound (AI) into a single ``*_mixed.wav`` playback file.
-        Writes WAV files for inbound, outbound and mixed channels to disk, then compresses to MP3."""
-        if not self._in_path and not self._out_path:
+    @staticmethod
+    def _pcm_energy(pcm: bytes) -> float:
+        """Compute RMS energy of PCM s16le mono (used for silence detection)."""
+        if len(pcm) < 2:
+            return 0.0
+        n = len(pcm) // 2
+        total = 0
+        for i in range(n):
+            s = struct.unpack_from("<h", pcm, i * 2)[0]
+            total += s * s
+        return (total / n) ** 0.5
+
+    def _write_recording_wav(self) -> None:
+        """Write inbound, outbound, and sequentially-interleaved mixed WAV/MP3.
+
+        The mixed WAV is built by sorting all chunks by timestamp and writing
+        them in chronological order. When both inbound and outbound chunks
+        overlap at the same time, the outbound (AI) chunk is placed AFTER the
+        inbound (user) chunk by adjusting its effective timestamp to be
+        slightly later (offset by the chunk duration). This prevents AI audio
+        from being heard before the user's question.
+        """
+        if not self._chunks:
             return
-        
+
         with self._lock:
-            in_frames = bytes(self._in_buffer)
-            out_frames = bytes(self._out_buffer)
-            # Clear buffers to free memory
-            self._in_buffer.clear()
-            self._out_buffer.clear()
+            chunks = list(self._chunks)
+            self._chunks.clear()
 
-        if (in_frames and out_frames
-                and self._in_first_write_t is not None
-                and self._out_first_write_t is not None):
-            offset_sec = self._out_first_write_t - self._in_first_write_t
-            _SR = 16000
-            _BPS = 2
-            if offset_sec > 0.01:
-                pad_bytes = int(offset_sec * _SR * _BPS)
-                out_frames = b"\x00" * pad_bytes + out_frames
-                logger.info(
-                    "Call recording: aligned outbound with {}ms silence prefix "
-                    "(outbound started {:.1f}s after inbound)",
-                    int(offset_sec * 1000), offset_sec,
-                )
-            elif offset_sec < -0.01:
-                pad_bytes = int(abs(offset_sec) * _SR * _BPS)
-                in_frames = b"\x00" * pad_bytes + in_frames
-                logger.info(
-                    "Call recording: aligned inbound with {}ms silence prefix "
-                    "(inbound started {:.1f}s after outbound)",
-                    int(abs(offset_sec) * 1000), abs(offset_sec),
-                )
+        # Separate inbound and outbound chunks
+        in_chunks: list[tuple[float, bytes]] = []
+        out_chunks: list[tuple[float, bytes]] = []
+        for ts, pcm, direction in chunks:
+            if direction == "in":
+                in_chunks.append((ts, pcm))
+            else:
+                out_chunks.append((ts, pcm))
 
-        # Write inbound WAV file
-        if self._in_path and in_frames:
-            try:
-                with wave.open(self._in_path, "wb") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(16_000)
-                    w.writeframes(in_frames)
-            except Exception as e:
-                logger.warning("Call recording mix: failed to write inbound WAV: {}", e)
+        # Write inbound WAV
+        if self._in_path and in_chunks:
+            self._write_wav_from_chunks(self._in_path, in_chunks, "inbound")
 
-        # Write outbound WAV file
-        if self._out_path and out_frames:
-            try:
-                with wave.open(self._out_path, "wb") as w:
-                    w.setnchannels(1)
-                    w.setsampwidth(2)
-                    w.setframerate(16_000)
-                    w.writeframes(out_frames)
-            except Exception as e:
-                logger.warning("Call recording mix: failed to write outbound WAV: {}", e)
+        # Write outbound WAV
+        if self._out_path and out_chunks:
+            self._write_wav_from_chunks(self._out_path, out_chunks, "outbound")
 
+        # Write sequentially-interleaved mixed WAV
         mixed_path = None
         try:
-            if not in_frames and not out_frames:
+            if not in_chunks and not out_chunks:
                 return
-            # Pad shorter stream with silence so mix length = max(len(in), len(out)).
-            ln = max(len(in_frames), len(out_frames))
-            if len(in_frames) < ln:
-                in_frames = in_frames + b"\x00" * (ln - len(in_frames))
-            if len(out_frames) < ln:
-                out_frames = out_frames + b"\x00" * (ln - len(out_frames))
-            
-            mixed = audioop.add(in_frames, out_frames, 2) if (in_frames and out_frames) else (in_frames or out_frames)
-            
+
+            # Build interleaved timeline
+            mixed_frames = self._build_sequential_mixed(in_chunks, out_chunks)
+            if not mixed_frames:
+                return
+
             stem = Path(self._in_path or self._out_path).stem
             for suffix in ("_inbound", "_outbound"):
                 if stem.endswith(suffix):
@@ -177,15 +186,16 @@ class CallRecorder:
             with wave.open(mixed_path, "wb") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
-                w.setframerate(16_000)
-                w.writeframes(mixed)
-            logger.info("Call recording: mixed WAV written {} ({} B)", mixed_path, len(mixed))
+                w.setframerate(_SR)
+                w.writeframes(mixed_frames)
+            logger.info("Call recording: sequential mixed WAV written {} ({} B, {:.1f}s)",
+                        mixed_path, len(mixed_frames), len(mixed_frames) / (_SR * _BPS))
 
             # Compress to MP3
             mp3_path = mixed_path.replace(".wav", ".mp3")
             try:
                 subprocess.run(
-                    ["ffmpeg", "-y", "-i", mixed_path, "-acodec", "libmp3lame", "-b:a", "32k", mp3_path],
+                    ["ffmpeg", "-y", "-i", mixed_path, "-acodec", "libmp3lame", "-b:a", "48k", mp3_path],
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
@@ -195,14 +205,107 @@ class CallRecorder:
             except Exception as ffmpeg_err:
                 logger.warning("Call recording: MP3 compression failed: {}", ffmpeg_err)
         except Exception as e:
-            logger.warning("Call recording mix failed: {}", e)
+            logger.exception("Call recording mix failed: {}", e)
+
+    def _build_sequential_mixed(
+        self,
+        in_chunks: list[tuple[float, bytes]],
+        out_chunks: list[tuple[float, bytes]],
+    ) -> bytes:
+        """Build a sequential mixed recording from timestamped chunks.
+
+        Algorithm:
+        1. All chunks are tagged with (timestamp, pcm, direction).
+        2. Sort by timestamp.
+        3. For overlapping chunks (AI starting while user still speaking):
+           - The user (inbound) audio takes priority at that timestamp.
+           - The AI (outbound) audio is delayed to start AFTER the user chunk ends.
+        4. Fill gaps with silence.
+        5. Result: user question always precedes AI answer.
+        """
+        if not in_chunks and not out_chunks:
+            return b""
+
+        ref_t = self._stream_start_t or (
+            min(
+                (c[0] for c in in_chunks),
+                default=(out_chunks[0][0] if out_chunks else time.time()),
+            )
+            if in_chunks or out_chunks
+            else time.time()
+        )
+
+        # Convert to (relative_time_sec, pcm, direction) tuples
+        tagged: list[tuple[float, bytes, str]] = []
+        for ts, pcm in in_chunks:
+            tagged.append(((ts - ref_t), pcm, "in"))
+        for ts, pcm in out_chunks:
+            tagged.append(((ts - ref_t), pcm, "out"))
+
+        # Sort by timestamp
+        tagged.sort(key=lambda x: x[0])
+
+        # Build sequential output: ensure outbound never precedes inbound at same time
+        # When overlap detected, delay outbound chunk to end of inbound chunk
+        result = bytearray()
+        last_end_time = 0.0  # tracks the end time of the last written audio
+
+        for t_start, pcm, direction in tagged:
+            duration = len(pcm) / (_SR * _BPS)
+            t_end = t_start + duration
+
+            if direction == "in":
+                # Inbound (user) always writes at its natural position
+                silence_needed = max(0, t_start - last_end_time)
+                if silence_needed > 0.005:  # >5ms gap
+                    result.extend(b"\x00" * int(silence_needed * _SR * _BPS))
+                result.extend(pcm)
+                last_end_time = max(last_end_time, t_end)
+            else:
+                # Outbound (AI) — must not start before last user audio ends
+                effective_start = max(t_start, last_end_time)
+                silence_needed = max(0, effective_start - last_end_time)
+                if silence_needed > 0.005:
+                    result.extend(b"\x00" * int(silence_needed * _SR * _BPS))
+                result.extend(pcm)
+                last_end_time = max(last_end_time, effective_start + duration)
+
+        return bytes(result)
+
+    def _write_wav_from_chunks(
+        self, path: str, chunks: list[tuple[float, bytes]], label: str
+    ) -> None:
+        """Write a single-direction WAV from timestamped chunks (with gap-filling silence)."""
+        if not chunks:
+            return
+        try:
+            ref_t = self._stream_start_t or chunks[0][0]
+            pcm_parts = bytearray()
+            last_end = 0.0
+            for ts, pcm in chunks:
+                t_start = ts - ref_t
+                duration = len(pcm) / (_SR * _BPS)
+                gap = max(0, t_start - last_end)
+                if gap > 0.005:
+                    pcm_parts.extend(b"\x00" * int(gap * _SR * _BPS))
+                pcm_parts.extend(pcm)
+                last_end = t_start + duration
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(_SR)
+                w.writeframes(bytes(pcm_parts))
+        except Exception as e:
+            logger.exception("Call recording: failed to write {} WAV {}: {}", label, path, e)
 
     def meta(self) -> dict[str, Any]:
         return {
             "inbound_wav": self._in_path,
             "outbound_wav": self._out_path,
             "call_recording": bool(self._in_path or self._out_path),
+            "total_chunks": len(self._chunks),
         }
+
 
 def _parse_log_id_date(session_id: str) -> str | None:
     """Extract YYYY-MM-DD from log_id patterns like camp-xxx-20260513T07291 or vobiz-live-20260518T161022-xxx."""
@@ -224,13 +327,11 @@ def _search_recording_dirs(
     for root in roots:
         if not root.is_dir():
             continue
-        # Check flat files directly in root (legacy recordings without date subdirectories)
         for sfx in suffixes:
             for ext in (".mp3", ".wav"):
                 cand = root / f"{stem}{sfx}{ext}"
                 if cand.is_file():
                     return cand
-        # If we have a date hint, search that exact day first in every root
         if date_hint:
             day_dir = root / date_hint
             if day_dir.is_dir():
@@ -239,7 +340,6 @@ def _search_recording_dirs(
                         cand = day_dir / f"{stem}{sfx}{ext}"
                         if cand.is_file():
                             return cand
-        # Fall back to scanning recent days
         dirs = sorted(
             (p for p in root.iterdir() if p.is_dir() and len(p.name) == 10),
             key=lambda p: p.name,
@@ -287,7 +387,6 @@ def recording_search_roots(base_dir: Optional[str | Path] = None) -> list[Path]:
             "/root/DataEdge/backend/data/call_recordings",
         ):
             _add(Path(candidate))
-        # Also search the local data/recordings directory for legacy flat files
         _recordings_dir = Path(__file__).resolve().parent.parent / "data" / "recordings"
         _add(_recordings_dir)
     return roots
@@ -339,7 +438,6 @@ def resolve_recording_file(day: str, filename: str, base_dir: Optional[str] = No
     
     base_root = Path(base_dir or settings.call_recording_dir).resolve()
     p = (base_root / day / safe).resolve()
-    # If exact file missing, try _mixed
     if not p.is_file():
         stem = safe.rsplit(".", 1)[0]
         mixed_mp3 = (base_root / day / f"{stem}_mixed.mp3").resolve()

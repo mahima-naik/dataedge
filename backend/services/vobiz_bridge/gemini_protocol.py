@@ -38,8 +38,8 @@ def build_live_setup(
     realtime_input_config: dict[str, Any] = {}
     if settings.gemini_live_aggressive_activity_detection:
         import os
-        start_sens = os.getenv("GEMINI_LIVE_VAD_START_SENSITIVITY", "START_SENSITIVITY_BALANCED").strip()
-        end_sens = os.getenv("GEMINI_LIVE_VAD_END_SENSITIVITY", "END_SENSITIVITY_BALANCED").strip()
+        start_sens = os.getenv("GEMINI_LIVE_VAD_START_SENSITIVITY", "START_SENSITIVITY_LOW").strip()
+        end_sens = os.getenv("GEMINI_LIVE_VAD_END_SENSITIVITY", "END_SENSITIVITY_LOW").strip()
 
         # Telephony-tuned timing: prevents phone speaker echo / micro-noise from cutting off AI mid-sentence
         # Use env values directly (no hard floor) so ultra-low latency settings take effect.
