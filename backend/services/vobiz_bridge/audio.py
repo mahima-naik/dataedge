@@ -21,18 +21,62 @@ except ImportError:
 from services.call_recording import CallRecorder
 
 
-def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
-    """Resample 24kHz mono s16le PCM to 16kHz using audioop.ratecv (high quality).
+def _lpf_design(cutoff_hz: float, num_taps: int, sr: int) -> np.ndarray:
+    """Design a Kaiser-windowed sinc low-pass FIR filter."""
+    nyq = sr / 2.0
+    fc = cutoff_hz / nyq
+    n = np.arange(num_taps) - (num_taps - 1) / 2.0
+    h = np.sinc(2 * fc * n)
+    h *= np.kaiser(num_taps, 5.0)
+    h /= h.sum()
+    return h.astype(np.float64)
 
-    Uses the same polyphase resampler as the greeting PCM pipeline for
-    consistent audio quality. The ``state`` parameter carries the audioop
-    rate converter state across chunk boundaries for smooth cross-chunk output.
+# Pre-designed low-pass filter (16kHz Nyquist = 8kHz, cutoff at 7.2kHz)
+# Kaiser window, 65 taps, beta=5.0, sr=24000, cutoff=7200
+_LPF_TAPS: np.ndarray = _lpf_design(7200.0, 65, 24000)
+_LPF_HALF: int = len(_LPF_TAPS) // 2
+
+
+def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
+    """Resample 24kHz mono s16le PCM to 16kHz using windowed-sinc FIR + linear interpolation.
+
+    Provides proper anti-aliasing (cutoff at 7.2kHz) before downsampling,
+    eliminating the harsh/metallic artifacts from the basic audioop.ratecv resampler.
+
+    The ``state`` dict carries the filter tail across chunk boundaries.
     """
-    if len(pcm_24k) < 2:
-        return pcm_24k, state
-    prev_state = state.get("ratecv") if isinstance(state, dict) else None
-    out, new_state = audioop.ratecv(pcm_24k, 2, 1, 24000, 16000, prev_state)
-    return out, {"ratecv": new_state}
+    if len(pcm_24k) < 4:
+        return pcm_24k, state or {}
+
+    tail: np.ndarray = (state or {}).get("tail")
+    src = np.frombuffer(pcm_24k, dtype=np.int16).astype(np.float64)
+    src_len = len(src)
+
+    # Prepend previous chunk's filter tail for seamless cross-fade
+    if tail is not None and len(tail) > 0:
+        src = np.concatenate([tail, src])
+    else:
+        # First chunk: pad with start of signal to avoid edge transient
+        src = np.concatenate([src[: _LPF_HALF][::-1], src])
+
+    # Apply FIR low-pass filter
+    filtered = np.convolve(src, _LPF_TAPS, mode="valid")
+    filtered_len = len(filtered)
+
+    # Save tail for next chunk (last half of filter length samples)
+    new_tail = filtered[-_LPF_HALF:] if filtered_len > _LPF_HALF else filtered.copy()
+
+    # Linear interpolation to target sample rate
+    out_len = int(filtered_len * 16000 / 24000)
+    if out_len < 2:
+        return pcm_24k, {"tail": new_tail}
+    indices = np.linspace(0, filtered_len - 1, out_len)
+    x0 = np.floor(indices).astype(np.int64)
+    x1 = np.minimum(x0 + 1, filtered_len - 1)
+    frac = indices - x0
+    out = filtered[x0] * (1.0 - frac) + filtered[x1] * frac
+    out = np.clip(out, -32768, 32767).astype(np.int16)
+    return out.tobytes(), {"tail": new_tail}
 
 
 def load_background_audio(path: str, target_sr: int = 16000) -> Optional[np.ndarray]:

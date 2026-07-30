@@ -1091,7 +1091,7 @@ async def handle_vobiz_ws_live(
                         int((vobiz_stream_started_at - _opening_t0) * 1000),
                     )
  
-                     if inbound_role and not inbound_script_cb_recorded:
+                    if inbound_role and not inbound_script_cb_recorded:
                         inbound_script_cb_recorded = True
                         try:
                             from core.state import _CAMPAIGN_TASKS, normalize_console_role

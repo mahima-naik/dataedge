@@ -195,7 +195,7 @@ class CallRecorder:
             mp3_path = mixed_path.replace(".wav", ".mp3")
             try:
                 subprocess.run(
-                    ["ffmpeg", "-y", "-i", mixed_path, "-acodec", "libmp3lame", "-b:a", "48k", mp3_path],
+                    ["ffmpeg", "-y", "-i", mixed_path, "-acodec", "libmp3lame", "-b:a", "64k", mp3_path],
                     check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
