@@ -21,62 +21,66 @@ except ImportError:
 from services.call_recording import CallRecorder
 
 
-def _lpf_design(cutoff_hz: float, num_taps: int, sr: int) -> np.ndarray:
-    """Design a Kaiser-windowed sinc low-pass FIR filter."""
-    nyq = sr / 2.0
-    fc = cutoff_hz / nyq
-    n = np.arange(num_taps) - (num_taps - 1) / 2.0
-    h = np.sinc(2 * fc * n)
-    h *= np.kaiser(num_taps, 5.0)
-    h /= h.sum()
-    return h.astype(np.float64)
+_LPF_TAPS: np.ndarray | None = None
+_FILTER_DELAY: int = 64  # samples at 24kHz (filter length - 1)
 
-# Pre-designed low-pass filter (16kHz Nyquist = 8kHz, cutoff at 7.2kHz)
-# Kaiser window, 65 taps, beta=5.0, sr=24000, cutoff=7200
-_LPF_TAPS: np.ndarray = _lpf_design(7200.0, 65, 24000)
-_LPF_HALF: int = len(_LPF_TAPS) // 2
+
+def _lpf_ensure() -> None:
+    global _LPF_TAPS
+    if _LPF_TAPS is not None:
+        return
+    nyq = 24000 / 2.0
+    fc = 7200.0 / nyq
+    n = np.arange(65) - 32.0
+    h = np.sinc(2 * fc * n)
+    h *= np.kaiser(65, 5.0)
+    h /= h.sum()
+    _LPF_TAPS = h.astype(np.float64)
 
 
 def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
-    """Resample 24kHz mono s16le PCM to 16kHz using windowed-sinc FIR + linear interpolation.
+    """Resample 24kHz mono s16le PCM to 16kHz via overlap-save FIR + linear interpolation.
 
-    Provides proper anti-aliasing (cutoff at 7.2kHz) before downsampling,
-    eliminating the harsh/metallic artifacts from the basic audioop.ratecv resampler.
+    Anti-aliasing cutoff at 7.2kHz (65-tap Kaiser windowed-sinc) eliminates the
+    harsh/metallic artifacts from ``audioop.ratecv``.
 
-    The ``state`` dict carries the filter tail across chunk boundaries.
+    The ``state`` dict holds the last ``_FILTER_DELAY`` (64) **input** samples so
+    overlap-save convolution produces exactly the right number of output samples
+    per chunk — no timing drift.
     """
     if len(pcm_24k) < 4:
         return pcm_24k, state or {}
+    _lpf_ensure()
 
-    tail: np.ndarray = (state or {}).get("tail")
+    in_tail: np.ndarray | None = (state or {}).get("in_tail")
     src = np.frombuffer(pcm_24k, dtype=np.int16).astype(np.float64)
     src_len = len(src)
 
-    # Prepend previous chunk's filter tail for seamless cross-fade
-    if tail is not None and len(tail) > 0:
-        src = np.concatenate([tail, src])
+    # Overlap-save: prepend last chunk's input tail
+    if in_tail is not None and len(in_tail) > 0:
+        padded = np.concatenate([in_tail, src])
     else:
-        # First chunk: pad with start of signal to avoid edge transient
-        src = np.concatenate([src[: _LPF_HALF][::-1], src])
+        pad = src[:_FILTER_DELAY][::-1] if src_len >= _FILTER_DELAY else np.full(_FILTER_DELAY, src[0])
+        padded = np.concatenate([pad, src])
 
-    # Apply FIR low-pass filter
-    filtered = np.convolve(src, _LPF_TAPS, mode="valid")
-    filtered_len = len(filtered)
+    # Save last _FILTER_DELAY input samples for next chunk
+    new_tail = src[-_FILTER_DELAY:].copy() if src_len >= _FILTER_DELAY else src.copy()
 
-    # Save tail for next chunk (last half of filter length samples)
-    new_tail = filtered[-_LPF_HALF:] if filtered_len > _LPF_HALF else filtered.copy()
+    # Overlap-save FIR: output has exactly src_len samples
+    filtered = np.convolve(padded, _LPF_TAPS, mode="valid")
+    # len(filtered) = len(padded) - _FILTER_DELAY = src_len
 
-    # Linear interpolation to target sample rate
-    out_len = int(filtered_len * 16000 / 24000)
-    if out_len < 2:
-        return pcm_24k, {"tail": new_tail}
-    indices = np.linspace(0, filtered_len - 1, out_len)
+    # Linear interpolation to 16kHz
+    out_len = int(src_len * 16000 / 24000)
+    if out_len < 1:
+        return b"", {"in_tail": new_tail}
+    indices = np.linspace(0, src_len - 1, out_len)
     x0 = np.floor(indices).astype(np.int64)
-    x1 = np.minimum(x0 + 1, filtered_len - 1)
+    x1 = np.minimum(x0 + 1, src_len - 1)
     frac = indices - x0
-    out = filtered[x0] * (1.0 - frac) + filtered[x1] * frac
+    out = filtered[:src_len][x0] * (1.0 - frac) + filtered[:src_len][x1] * frac
     out = np.clip(out, -32768, 32767).astype(np.int16)
-    return out.tobytes(), {"tail": new_tail}
+    return out.tobytes(), {"in_tail": new_tail}
 
 
 def load_background_audio(path: str, target_sr: int = 16000) -> Optional[np.ndarray]:
