@@ -200,11 +200,6 @@ function formatDate(dateStr) {
     }
 }
 
-function escapeHtml(str) {
-    if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 // Auto-refresh on page load and after upload
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(refreshCampaignFiles, 1500);
