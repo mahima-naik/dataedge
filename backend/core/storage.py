@@ -319,6 +319,13 @@ def init_db(data_dir: Optional[Path | str] = None) -> Path:
     except sqlite3.OperationalError:
         pass  # Already exists
 
+    # Migration: add file_id column to leads for campaign file tracking
+    try:
+        conn.execute("ALTER TABLE leads ADD COLUMN file_id INTEGER DEFAULT NULL")
+        _commit_with_retry(conn)
+    except sqlite3.OperationalError:
+        pass  # Already exists
+
     # Migration: add role column to agents
     try:
         conn.execute("ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'factory'")
@@ -341,6 +348,25 @@ def init_db(data_dir: Optional[Path | str] = None) -> Path:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT ''
         );
+    """)
+    _commit_with_retry(conn)
+
+    # Campaign Files tracking — tracks uploaded lead files and their campaign status
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS campaign_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            original_filename TEXT NOT NULL DEFAULT '',
+            upload_date TEXT DEFAULT (datetime('now')),
+            total_leads INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'not_started',
+            is_active INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cf_role ON campaign_files(role);
+        CREATE INDEX IF NOT EXISTS idx_cf_active ON campaign_files(role, is_active);
     """)
     _commit_with_retry(conn)
 
@@ -613,14 +639,16 @@ async def get_leads(
     limit: int = 0,
     *,
     order: str = "created",
+    file_id: int = None,
 ) -> list[dict]:
-    return await asyncio.to_thread(_get_leads_sync, role, status, limit, order)
+    return await asyncio.to_thread(_get_leads_sync, role, status, limit, order, file_id)
 
 def _get_leads_sync(
     role: str,
     status: str = None,
     limit: int = 0,
     order: str = "created",
+    file_id: int = None,
 ) -> list[dict]:
     conn = _get_conn()
     query = "SELECT * FROM leads WHERE role = ?"
@@ -628,6 +656,9 @@ def _get_leads_sync(
     if status:
         query += " AND status = ?"
         params.append(status)
+    if file_id is not None:
+        query += " AND file_id = ?"
+        params.append(file_id)
     if (order or "created").strip().lower() == "activity":
         query += """
          ORDER BY
@@ -712,10 +743,10 @@ def _add_lead_sync(role: str, name: str, phone: str, email: str = "", company: s
     return _run_db(_do)
 
 
-async def bulk_add_leads(role: str, leads: list[dict]) -> int:
-    return await asyncio.to_thread(_bulk_add_leads_sync, role, leads)
+async def bulk_add_leads(role: str, leads: list[dict], file_id: int = None) -> int:
+    return await asyncio.to_thread(_bulk_add_leads_sync, role, leads, file_id)
 
-def _bulk_add_leads_sync(role: str, leads: list[dict]) -> int:
+def _bulk_add_leads_sync(role: str, leads: list[dict], file_id: int = None) -> int:
     """Insert leads, persisting any **extra** caller fields (anything beyond
     name/phone/email/company/details/status) into the ``extra`` JSON column so
     the AI can reference them on the call.
@@ -742,8 +773,8 @@ def _bulk_add_leads_sync(role: str, leads: list[dict]) -> int:
             extras_dict = {str(k): str(v) for k, v in extras_dict.items() if str(v).strip()}
             extra_json = json.dumps(extras_dict, ensure_ascii=False) if extras_dict else "{}"
             conn.execute(
-                "INSERT INTO leads (role, name, phone, email, company, details, extra, segment, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO leads (role, name, phone, email, company, details, extra, segment, status, file_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     role,
                     lead.get("name", "Unknown"),
@@ -754,6 +785,7 @@ def _bulk_add_leads_sync(role: str, leads: list[dict]) -> int:
                     extra_json,
                     lead.get("segment", "rfq"),
                     "pending",
+                    file_id,
                 )
             )
             count += 1
@@ -2281,3 +2313,99 @@ async def get_whatsapp_logs_by_role(
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     return await asyncio.to_thread(_query)
+
+
+# --- Campaign Files ---
+
+def _create_campaign_file_sync(role: str, filename: str, original_filename: str, total_leads: int) -> int:
+    def _do():
+        conn = _get_conn()
+        cur = conn.execute(
+            "INSERT INTO campaign_files (role, filename, original_filename, total_leads, status) VALUES (?, ?, ?, ?, 'not_started')",
+            (role, filename, original_filename, total_leads),
+        )
+        _commit_with_retry(conn)
+        return cur.lastrowid
+    return _run_db(_do)
+
+
+async def create_campaign_file(role: str, filename: str, original_filename: str, total_leads: int) -> int:
+    return await asyncio.to_thread(_create_campaign_file_sync, role, filename, original_filename, total_leads)
+
+
+def _get_campaign_files_sync(role: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM campaign_files WHERE role = ? ORDER BY created_at DESC", (role,)
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+async def get_campaign_files(role: str) -> list[dict]:
+    return await asyncio.to_thread(_get_campaign_files_sync, role)
+
+
+def _set_active_campaign_file_sync(role: str, file_id: int) -> None:
+    def _do():
+        conn = _get_conn()
+        conn.execute("UPDATE campaign_files SET is_active = 0 WHERE role = ?", (role,))
+        conn.execute(
+            "UPDATE campaign_files SET is_active = 1, updated_at = datetime('now') WHERE id = ? AND role = ?",
+            (file_id, role),
+        )
+        _commit_with_retry(conn)
+    _run_db(_do)
+
+
+async def set_active_campaign_file(role: str, file_id: int) -> None:
+    return await asyncio.to_thread(_set_active_campaign_file_sync, role, file_id)
+
+
+def _get_active_campaign_file_sync(role: str) -> Optional[dict]:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM campaign_files WHERE role = ? AND is_active = 1", (role,)
+    ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+async def get_active_campaign_file(role: str) -> Optional[dict]:
+    return await asyncio.to_thread(_get_active_campaign_file_sync, role)
+
+
+def _update_campaign_file_status_sync(file_id: int, status: str) -> None:
+    def _do():
+        conn = _get_conn()
+        conn.execute(
+            "UPDATE campaign_files SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            (status, file_id),
+        )
+        _commit_with_retry(conn)
+    _run_db(_do)
+
+
+async def update_campaign_file_status(file_id: int, status: str) -> None:
+    return await asyncio.to_thread(_update_campaign_file_status_sync, file_id, status)
+
+
+def _get_campaign_file_leads_count_sync(file_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) as c FROM leads WHERE file_id = ?", (file_id,)).fetchone()
+    return int(row["c"]) if row else 0
+
+
+async def get_campaign_file_leads_count(file_id: int) -> int:
+    return await asyncio.to_thread(_get_campaign_file_leads_count_sync, file_id)
+
+
+def _delete_campaign_file_sync(file_id: int) -> None:
+    def _do():
+        conn = _get_conn()
+        conn.execute("UPDATE leads SET file_id = NULL WHERE file_id = ?", (file_id,))
+        conn.execute("DELETE FROM campaign_files WHERE id = ?", (file_id,))
+        _commit_with_retry(conn)
+    _run_db(_do)
+
+
+async def delete_campaign_file(file_id: int) -> None:
+    return await asyncio.to_thread(_delete_campaign_file_sync, file_id)

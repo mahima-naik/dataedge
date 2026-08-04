@@ -273,10 +273,10 @@ def get_leads(role: str, status: str = None, limit: int = 500) -> list[dict]:
         logger.exception("get_leads failed for role={!r}", role)
         return []
 
-def add_leads_bulk(role: str, leads: list[dict]) -> int:
+def add_leads_bulk(role: str, leads: list[dict], file_id: int = None) -> int:
     from core.storage import _bulk_add_leads_sync
 
-    return _bulk_add_leads_sync(role, leads)
+    return _bulk_add_leads_sync(role, leads, file_id)
 
 def update_lead_status(lead_id: int, status: str, error: str = None, analysis: dict = None, duration_sec: float = None):
     try:

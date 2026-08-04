@@ -11,3 +11,4 @@ from .auth_api import router as auth_router
 from .whatsapp import router as whatsapp_router
 from .whatsapp_proxy import router as whatsapp_proxy_router
 from .leads_feedback import router as leads_feedback_router
+from .campaign_files import router as campaign_files_router

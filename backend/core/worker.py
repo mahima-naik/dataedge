@@ -700,7 +700,16 @@ async def _campaign_worker_role(role: str):
 
             state = get_state(role)
 
-            pending = await get_leads(role, status="pending", limit=1000)
+            # Filter leads by active campaign file if one is set
+            _active_file_id = None
+            try:
+                from core import storage as _cf_storage
+                _active_file = await _cf_storage.get_active_campaign_file(role)
+                _active_file_id = _active_file.get("id") if _active_file else None
+            except Exception:
+                pass
+
+            pending = await get_leads(role, status="pending", limit=1000, file_id=_active_file_id)
             if not pending:
                 try:
                     now_t = time.time()

@@ -28,6 +28,7 @@ from api.routes import (
     whatsapp_router,
     whatsapp_proxy_router,
     leads_feedback_router,
+    campaign_files_router,
 )
 from config import FRONTEND_DIR
 from core.auth import limiter
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(whatsapp_router)
     app.include_router(whatsapp_proxy_router)
     app.include_router(leads_feedback_router)
+    app.include_router(campaign_files_router)
 
     static_dir = FRONTEND_DIR / "static"
     if static_dir.is_dir():

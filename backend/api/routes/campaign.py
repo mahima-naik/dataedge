@@ -384,8 +384,26 @@ async def upload_leads(file: UploadFile = File(...), request: Request = None):
                     entry[col] = sv
             clean_leads.append(entry)
 
-        count = add_leads_bulk(role, clean_leads)
+        # Create campaign file record first so we can link leads to it
+        cf_id = None
+        try:
+            from core import storage as _cf_storage
+            cf_id = await _cf_storage.create_campaign_file(role, file.filename or "unknown", file.filename or "unknown", len(clean_leads))
+        except Exception as _cf_err:
+            logger.warning(f"Campaign file record creation failed: {_cf_err}")
+
+        count = add_leads_bulk(role, clean_leads, file_id=cf_id)
         logger.info(f"Upload complete for role '{role}': {count} leads saved to database.")
+
+        # Set as active file if leads were uploaded
+        if cf_id and count > 0:
+            try:
+                from core import storage as _cf_storage2
+                await _cf_storage2.set_active_campaign_file(role, cf_id)
+                await _cf_storage2.update_campaign_file_status(cf_id, "not_started")
+            except Exception:
+                pass
+
         recent: list = []
         if count:
             n = min(150, max(int(count), 1))
@@ -398,6 +416,7 @@ async def upload_leads(file: UploadFile = File(...), request: Request = None):
             "leads": clean_leads[:50],
             "headers": headers,
             "column_map": col_map,
+            "campaign_file_id": cf_id,
         }
     except HTTPException:
         raise
@@ -860,6 +879,14 @@ async def get_campaign_status(
             "campaign_hours": get_campaign_hours_status(),
             "campaign_paused": await lead_storage.is_campaign_globally_paused(),
         }
+
+        # Add active file info to state
+        try:
+            _active_file = await lead_storage.get_active_campaign_file(role)
+            res["active_file"] = _active_file
+        except Exception:
+            res["active_file"] = None
+
         _STATE_CACHE[role] = (now, res)
         return res
     except Exception as e:
