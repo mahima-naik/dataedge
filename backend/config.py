@@ -111,7 +111,12 @@ class Settings:
     campaign_quiet_end: str = (os.getenv("CAMPAIGN_QUIET_END", "09:30").strip() or "09:30")
 
     # Gemini Live API (native speech-to-speech for sub-800ms latency on phone calls)
-    gemini_live_model: str = os.getenv("GEMINI_LIVE_MODEL", "models/gemini-3.1-flash-live-preview").strip()
+    # Valid Google AI Studio Multimodal Live model: models/gemini-2.0-flash-exp
+    gemini_live_model: str = (
+        "models/gemini-2.0-flash-exp"
+        if ("3.1" in os.getenv("GEMINI_LIVE_MODEL", "") or "3-1" in os.getenv("GEMINI_LIVE_MODEL", ""))
+        else os.getenv("GEMINI_LIVE_MODEL", "models/gemini-2.0-flash-exp").strip()
+    )
     gemini_live_voice: str = os.getenv("GEMINI_LIVE_VOICE", "Leda").strip()
     gemini_live_language_code: str = os.getenv("GEMINI_LIVE_LANGUAGE_CODE", "en-IN").strip()
     # When True: skip disk/primed PCM opener — Gemini Live speaks the greeting (same engine as the call).
@@ -132,11 +137,11 @@ class Settings:
     )
 
     # Playout jitter buffer safety margin in seconds (default: 0.06 = 60ms).
-    # Lowered from 0.40s → 0.12s → 0.06s to reduce first-audio-chunk latency.
-    # 60ms = 3 packets @ 20ms — sufficient for most network conditions.
-    # Increase to 0.12-0.20 only if audio stuttering occurs on high-jitter networks.
+    # Lowered from 0.40s → 0.12s → 0.06s → 0.03s to reduce first-audio-chunk latency.
+    # 30ms = 1.5 packets @ 20ms — minimal buffering for low-latency voice.
+    # Increase to 0.06-0.12 only if audio stuttering occurs on high-jitter networks.
     vobiz_playout_prebuffer_seconds: float = float(
-        os.getenv("VOBIZ_PLAYOUT_PREBUFFER_SECONDS", "0.06")
+        os.getenv("VOBIZ_PLAYOUT_PREBUFFER_SECONDS", "0.03")
     )
     # Browser voice test prebuffer (default: 0.150 = 150ms).
     # Accumulates this much audio before starting browser playout.
@@ -293,14 +298,14 @@ def validate_critical_config() -> list[str]:
             problems.append(
                 "Hostinger shared domain (.hstgr.cloud) detected for Vobiz media streaming! "
                 "Hostinger's proxy blocks WebSocket upgrade requests (101 Switching Protocols), causing PITCH SILENCE on calls. "
-                "Set VOBIZ_PUBLIC_BASE_URL=http://89.116.122.41:8001 and VOBIZ_STREAM_PUBLIC_BASE_URL=http://89.116.122.41:8001 to bypass the proxy."
+                "Set VOBIZ_PUBLIC_BASE_URL=http://31.97.186.20:8001 and VOBIZ_STREAM_PUBLIC_BASE_URL=http://31.97.186.20:8001 to bypass the proxy."
             )
     # Warn about empty stream URL (non-fatal but important)
     elif vb and pub and not ts:
         problems.append(
             "VOBIZ_STREAM_PUBLIC_BASE_URL is empty — media WebSocket will route through VOBIZ_PUBLIC_BASE_URL. "
             "If your domain/hosting does NOT support WebSocket upgrades, calls will connect but produce SILENCE. "
-            "Set VOBIZ_STREAM_PUBLIC_BASE_URL=http://89.116.122.41:8001 for direct WS media."
+            "Set VOBIZ_STREAM_PUBLIC_BASE_URL=http://31.97.186.20:8001 for direct WS media."
         )
     # Silence hangup too short
     silence_sec = float(os.getenv("CALL_SILENCE_HANGUP_SEC", "30"))
