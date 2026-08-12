@@ -2120,8 +2120,14 @@ async def handle_vobiz_ws_live(
 
                     # Recording depth / drop metrics (spec #13/#19).
                     if call_rec is not None:
-                        call_metrics.set_recording_depth(call_rec.recording_depth())
-                        _rd = call_rec.recording_drop_count()
+                        call_metrics.set_recording_depth(
+                            call_rec.recording_depth() if hasattr(call_rec, "recording_depth") else 0
+                        )
+                        _rd = (
+                            call_rec.recording_drop_count()
+                            if hasattr(call_rec, "recording_drop_count")
+                            else 0
+                        )
                         if _rd > _prev_rec_drop:
                             call_metrics.note_recording_drop(_rd - _prev_rec_drop)
                             _prev_rec_drop = _rd
