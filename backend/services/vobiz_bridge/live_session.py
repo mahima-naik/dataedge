@@ -1267,7 +1267,7 @@ async def handle_vobiz_ws_live(
             inbound_callback_recorded = False
 
             async def pump_vobiz_to_gemini() -> None:
-                nonlocal last_user_audio_t, vobiz_meta_logged, inbound_callback_recorded, vobiz_stream_started_at
+                nonlocal last_user_audio_t, vobiz_meta_logged, inbound_callback_recorded, vobiz_stream_started_at, capture_flushed
                 connect_t0 = time.perf_counter()
                 user_audio_fwd_bytes = 0
                 user_audio_fwd_logged = False
