@@ -855,6 +855,11 @@ async def handle_vobiz_ws_live(
     defer_gemini_until_scripted = len(prior_16k_queue) > 0
     opening_script_pcm = bytearray(prior_16k_queue)
 
+    # Set once the pre-recorded greeting has FINISHED PLAYING to the callee
+    # (not just been queued). The mixer is gated on this so it does not inject
+    # silence/Gemini audio between the greeting and Gemini's first response.
+    greeting_audio_done = asyncio.Event()
+
     mix_bg_audio = None
     mix_bg_volume = 0.0
     if getattr(settings, "background_music_enabled", False):
@@ -929,11 +934,14 @@ async def handle_vobiz_ws_live(
                 )
                 # The greeting is already delivered to Vobiz in one shot; Vobiz
                 # queues/buffers and plays it at real-time regardless of our loop.
-                # Don't park the greeting phase for the full playback duration —
-                # under event-loop starvation that sleep stretches to seconds and
-                # leaves dead air before Gemini connects. A short settle is enough;
-                # Gemini's audio is appended AFTER the greeting in Vobiz's queue, so
-                # there is no overlap. Reduced from 350ms→120ms for lower latency.
+                # Signal the mixer only AFTER the greeting has finished PLAYING, so
+                # it starts sending Gemini audio exactly when the greeting ends
+                # (Gemini's audio is already buffered by then — no dead air).
+                _greeting_play_secs = len(_outbuf) / (2.0 * VOBIZ_SR)
+                try:
+                    asyncio.get_running_loop().call_later(_greeting_play_secs, greeting_audio_done.set)
+                except Exception:
+                    greeting_audio_done.set()
                 await asyncio.sleep(0.12)
             finally:
                 opening_done.set()
@@ -2093,6 +2101,19 @@ async def handle_vobiz_ws_live(
                                 # Generation finished with empty buffer — stop playback.
                                 is_playing_gemini = False
                                 gemini_pcm = _silence_pad(chunk_bytes)
+
+                    # While the pre-recorded greeting is still playing, do NOT send
+                    # silence/Gemini audio. The greeting (delivered by the drain task)
+                    # is already queued in Vobiz; sending here would inject dead air
+                    # between the greeting and Gemini's first response. Just pace the
+                    # loop and keep buffering Gemini audio until the greeting ends.
+                    if defer_gemini_until_scripted and not greeting_audio_done.is_set():
+                        now = time.perf_counter()
+                        late, sleep = scheduler.tick(now)
+                        call_metrics.note_tick(late)
+                        if sleep > 0:
+                            await asyncio.sleep(sleep)
+                        continue
 
                     # Always send to Vobiz to keep the native jitter buffer warmed up and synced.
                     first_tx = not latency._first_vobiz_send
