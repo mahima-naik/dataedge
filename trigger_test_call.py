@@ -4,7 +4,7 @@ import time
 
 auth_id = "MA_UX68R8GL"
 auth_token = "SpqcgHeWozfLF58ifxDTRD4ueBx2cwifWGfiAVq4uQGIxHkXctQUbA4tmMpUOxgx"
-from_num = "918065481653"
+from_num = "918071582544"
 to_num = "+919731614215"
 base_url = "https://89.116.122.41.nip.io"
 camp_id = f"manual_data_edge_test_{int(time.time())}"
@@ -25,7 +25,6 @@ body = {
     "ring_method": "POST",
     "hangup_url": f"{base_url}/vobiz/hangup?camp_id={camp_id}",
     "hangup_method": "POST",
-    "hangup_on_ring": "60",
     "time_limit": 3600,
 }
 

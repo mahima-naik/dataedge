@@ -1,57 +1,171 @@
 #!/bin/bash
-# Deploy bridge layout → VPS (adjust host/path as needed)
-# Remote WorkingDirectory for uvicorn should match RUNTIME (default: backend/).
-set -e
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${ROOT_DIR}"
-TARGET="${DEPLOY_HOST:-root@89.116.122.41}"
-REMOTE="${REMOTE_ROOT:-/root/vernika}"
-RUNTIME="${RUNTIME_DIR:-backend}"
+# ── Data Edge VPS Deployment Script ──────────────────────────────────────
+# Run this ON THE VPS as root to deploy the latest code and fix the
+# crash-loop + WebSocket disconnect issues.
+#
+# Usage:
+#   scp -r "Data-Edge (2) 2/Data-Edge" root@89.116.122.41:/opt/dataedge
+#   ssh root@89.116.122.41 "bash /opt/dataedge/deploy/deploy_vps.sh"
+# ──────────────────────────────────────────────────────────────────────────
+set -euo pipefail
 
-echo "🚀 Deploy → $TARGET:$REMOTE/$RUNTIME"
+APP_DIR="/opt/dataedge"
+BACKEND="$APP_DIR/backend"
+VENV="$APP_DIR/venv"
+LOG_DIR="/var/log/dataedge"
+SERVICE_FILE="/etc/systemd/system/dataedge.service"
+
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Data Edge VPS Deployment — $(date '+%Y-%m-%d %H:%M:%S')"
+echo "═══════════════════════════════════════════════════════════════════"
+
+# 1. Stop existing service (if running)
 echo ""
+echo "▸ Stopping existing service..."
+systemctl stop dataedge.service 2>/dev/null || true
 
-echo "📦 Frontend"
-if command -v rsync >/dev/null 2>&1; then
-  rsync -az --exclude ".DS_Store" -e ssh "${ROOT_DIR}/frontend/" "${TARGET}:${REMOTE}/frontend/"
-else
-  scp -r "${ROOT_DIR}/frontend/" "${TARGET}:${REMOTE}/frontend/"
+# 2. Create log directory
+echo "▸ Creating log directory..."
+mkdir -p "$LOG_DIR"
+chmod 755 "$LOG_DIR"
+
+# 3. Python venv + dependencies
+echo "▸ Setting up Python virtual environment..."
+if [ ! -d "$VENV" ]; then
+    python3 -m venv "$VENV"
+fi
+source "$VENV/bin/activate"
+pip install --upgrade pip > /dev/null 2>&1
+
+echo "▸ Installing dependencies..."
+pip install -r "$BACKEND/requirements.txt" 2>&1 | tail -3
+
+# Install uvloop + httptools for performance (optional but recommended)
+pip install uvloop httptools 2>/dev/null || echo "  (uvloop/httptools not available — using defaults)"
+
+# 4. Validate .env
+echo "▸ Validating .env configuration..."
+if [ ! -f "$APP_DIR/.env" ]; then
+    echo "  ⚠  WARNING: $APP_DIR/.env not found!"
+    echo "     Copy your .env to $APP_DIR/.env and re-run this script."
+    exit 1
 fi
 
-echo "📦 Backend (api + core + services + entry)"
-scp "${ROOT_DIR}/backend/main.py" "${ROOT_DIR}/backend/config.py" "${TARGET}:${REMOTE}/${RUNTIME}/"
-scp -r "${ROOT_DIR}/backend/api" "${TARGET}:${REMOTE}/${RUNTIME}/"
-scp -r "${ROOT_DIR}/backend/core" "${TARGET}:${REMOTE}/${RUNTIME}/"
-scp -r "${ROOT_DIR}/backend/services" "${TARGET}:${REMOTE}/${RUNTIME}/"
-scp -r "${ROOT_DIR}/backend/scripts" "${TARGET}:${REMOTE}/${RUNTIME}/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/requirements.txt" "${TARGET}:${REMOTE}/${RUNTIME}/"
+# Check critical vars
+source "$APP_DIR/.env"
+MISSING=""
+[ -z "${GEMINI_API_KEY:-}" ] && MISSING="$MISSING GEMINI_API_KEY"
+[ -z "${VOBIZ_PUBLIC_BASE_URL:-}" ] && MISSING="$MISSING VOBIZ_PUBLIC_BASE_URL"
+[ -z "${VOBIZ_DATA_EDGE_AUTH_ID:-}" ] && MISSING="$MISSING VOBIZ_DATA_EDGE_AUTH_ID"
 
-echo "📦 Prompts + data snippets"
-ssh "${TARGET}" "mkdir -p ${REMOTE}/${RUNTIME}/prompts ${REMOTE}/${RUNTIME}/data/{data_edge,greetings,background}"
-scp "${ROOT_DIR}/backend/prompts/"*.txt "${TARGET}:${REMOTE}/${RUNTIME}/prompts/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/prompts/"*.py "${TARGET}:${REMOTE}/${RUNTIME}/prompts/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/data/data_edge/rag_source.txt" "${TARGET}:${REMOTE}/${RUNTIME}/data/data_edge/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/data/background/"*.wav "${TARGET}:${REMOTE}/${RUNTIME}/data/background/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/data/greetings/"*.pcm "${TARGET}:${REMOTE}/${RUNTIME}/data/greetings/" 2>/dev/null || true
-scp "${ROOT_DIR}/backend/data/greetings/"*.pcm.meta "${TARGET}:${REMOTE}/${RUNTIME}/data/greetings/" 2>/dev/null || true
+if [ -n "$MISSING" ]; then
+    echo "  ⚠  WARNING: Missing critical env vars:$MISSING"
+    echo "     Calls will fail until these are set."
+fi
 
-echo "✅ Sync done."
+# Check for Hostinger domain in VOBIZ_PUBLIC_BASE_URL
+if echo "${VOBIZ_PUBLIC_BASE_URL:-}" | grep -qi "hstgr.cloud"; then
+    echo ""
+    echo "  ⚠  ═══════════════════════════════════════════════════════════"
+    echo "  ⚠  CRITICAL: VOBIZ_PUBLIC_BASE_URL uses Hostinger domain!"
+    echo "  ⚠  Hostinger's proxy BLOCKS WebSocket upgrades (101)."
+    echo "  ⚠  Calls will ring but produce SILENCE."
+    echo "  ⚠  FIX: Set VOBIZ_PUBLIC_BASE_URL=http://89.116.122.41:8001"
+    echo "  ⚠  FIX: Set VOBIZ_STREAM_PUBLIC_BASE_URL=http://89.116.122.41:8001"
+    echo "  ⚠  ═══════════════════════════════════════════════════════════"
+    echo ""
+fi
 
-# Transcript QA callback times (IST): ensure VPS env has Asian/Kolkata anchor.
-ENV_ROOT="${REMOTE}/.env"
-ENV_BACKEND="${REMOTE}/${RUNTIME}/.env"
-for envpath in "${ENV_ROOT}" "${ENV_BACKEND}"; do
-  ssh "${TARGET}" "if [ -f '${envpath}' ] && ! grep -q '^TRANSCRIPT_CALLBACK_TZ=' '${envpath}' 2>/dev/null; then echo 'TRANSCRIPT_CALLBACK_TZ=Asia/Kolkata' >> '${envpath}'; echo \"  appended TRANSCRIPT_CALLBACK_TZ → ${envpath}\"; fi" || true
-done
+# 5. Install systemd service
+echo "▸ Installing systemd service..."
+cat > "$SERVICE_FILE" << 'SERVICE_EOF'
+[Unit]
+Description=PitchX Solutions — Data Edge AI Agent
+After=network-online.target
+Wants=network-online.target
 
-# Avoid orphaned uvicorn holding :8000 while systemd restart loops (would serve stale API → 404 on newer routes).
-echo "📦 Python deps (if requirements changed)"
-ssh "${TARGET}" "${REMOTE}/venv/bin/pip install -r ${REMOTE}/${RUNTIME}/requirements.txt -q" || true
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/dataedge/backend
 
-echo "🔁 Restart vernika.service (stop → free :8000 → start)"
-ssh "${TARGET}" "systemctl stop vernika.service 2>/dev/null || true; sleep 1; fuser -k 8000/tcp 2>/dev/null || true; sleep 1; systemctl start vernika.service 2>/dev/null || systemctl restart vernika.service 2>/dev/null || true"
-sleep 2
-ssh "${TARGET}" "systemctl is-active vernika.service 2>/dev/null || true; curl -sf http://127.0.0.1:8000/health >/dev/null && echo '  health: ok' || echo '  health: FAILED — check server.log'"
+StandardOutput=append:/var/log/dataedge/stdout.log
+StandardError=append:/var/log/dataedge/stderr.log
 
-echo "💡 On host if deps changed: ssh ${TARGET} 'cd ${REMOTE}/${RUNTIME} && pip install -r requirements.txt && systemctl restart vernika.service'"
+ExecStart=/opt/dataedge/venv/bin/python -u -m uvicorn main:app \
+    --host 0.0.0.0 --port 8001 \
+    --workers 1 \
+    --loop uvloop \
+    --http httptools \
+    --ws websockets \
+    --log-level info \
+    --access-log /var/log/dataedge/access.log \
+    --timeout-keep-alive 300
+
+EnvironmentFile=/opt/dataedge/.env
+
+MemoryMax=1536M
+MemoryHigh=1280M
+
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+WatchdogSec=120
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/dataedge/backend/data /var/log/dataedge
+
+KillSignal=SIGTERM
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+# 6. Reload and enable
+echo "▸ Reloading systemd..."
+systemctl daemon-reload
+systemctl enable dataedge.service
+
+# 7. Clear old crash-loop logs
+echo "▸ Clearing old logs..."
+> "$LOG_DIR/stdout.log" 2>/dev/null || true
+> "$LOG_DIR/stderr.log" 2>/dev/null || true
+> "$LOG_DIR/startup_error.log" 2>/dev/null || true
+
+# 8. Start service
+echo "▸ Starting Data Edge AI Agent..."
+systemctl start dataedge.service
+sleep 3
+
+# 9. Check status
+echo ""
+if systemctl is-active --quiet dataedge.service; then
+    echo "  ✅ Data Edge is RUNNING"
+    echo "  PID: $(systemctl show dataedge.service --property=MainPID --value)"
+    echo "  Logs: journalctl -u dataedge -f"
+    echo "  Web:  http://$(hostname -I | awk '{print $1}'):8001/"
+else
+    echo "  ❌ Data Edge FAILED to start!"
+    echo ""
+    echo "  Last 20 lines of stderr:"
+    tail -20 "$LOG_DIR/stderr.log" 2>/dev/null || echo "  (no stderr output)"
+    echo ""
+    echo "  Startup error log:"
+    cat "$LOG_DIR/startup_error.log" 2>/dev/null || echo "  (no startup error log)"
+    echo ""
+    echo "  systemctl status dataedge:"
+    systemctl status dataedge.service --no-pager 2>&1 | head -20
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════════"
+echo "  Done. Monitor with: journalctl -u dataedge -f"
+echo "═══════════════════════════════════════════════════════════════════"

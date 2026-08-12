@@ -38,49 +38,99 @@ def _lpf_ensure() -> None:
     _LPF_TAPS = h.astype(np.float64)
 
 
+# Streaming resampler constants. The overlap-save tail for live audio is 65
+# samples (one more than the 64-tap filter delay) so that output samples
+# straddling a chunk boundary always land on a filtered index m > 0 and never
+# need a clamped/extrapolated interpolation (a per-boundary glitch source).
+_STREAM_TAIL: int = 65
+_STREAM_OFF: int = 33  # filtered[m] is centered on input sample in_pos + m - 33
+
+
 def resample_24k_to_16k_numpy(pcm_24k: bytes, state: dict | None = None) -> tuple[bytes, dict]:
     """Resample 24kHz mono s16le PCM to 16kHz via overlap-save FIR + linear interpolation.
 
     Anti-aliasing cutoff at 7.2kHz (65-tap Kaiser windowed-sinc) eliminates the
     harsh/metallic artifacts from ``audioop.ratecv``.
 
-    The ``state`` dict holds the last ``_FILTER_DELAY`` (64) **input** samples so
-    overlap-save convolution produces exactly the right number of output samples
-    per chunk — no timing drift.
+    Two modes:
+
+    * ``state is None`` — one-shot resample of a whole buffer (greeting PCM /
+      TTS fallback via ``pcm_resample``). Legacy path, byte-for-byte unchanged.
+    * ``state`` dict — streaming resample of Gemini Live audio chunks. The state
+      carries the last ``_STREAM_TAIL`` (65) **input** samples plus a cumulative
+      input position (``in_pos``) and the next output index (``next_j``) so the
+      interpolation grid keeps an exact, continuous 1.5-sample step across chunk
+      boundaries. The old per-chunk ``np.linspace(0, src_len-1, out_len)`` reset
+      the phase every chunk, producing a periodic (~50Hz) buzz in live audio.
     """
     if len(pcm_24k) < 4:
         return pcm_24k, state or {}
     _lpf_ensure()
 
-    in_tail: np.ndarray | None = (state or {}).get("in_tail")
     src = np.frombuffer(pcm_24k, dtype=np.int16).astype(np.float64)
     src_len = len(src)
 
-    # Overlap-save: prepend last chunk's input tail
+    # ----- one-shot mode (greeting PCM / TTS fallback): unchanged legacy path -----
+    if state is None:
+        pad = src[:_FILTER_DELAY][::-1] if src_len >= _FILTER_DELAY else np.full(_FILTER_DELAY, src[0])
+        padded = np.concatenate([pad, src])
+        if src_len >= _FILTER_DELAY:
+            new_tail = src[-_FILTER_DELAY:].copy()
+        else:
+            new_tail = np.concatenate([np.full(_FILTER_DELAY - src_len, src[0]), src])
+        filtered = np.convolve(padded, _LPF_TAPS, mode="valid")
+        if len(filtered) < src_len:
+            filtered = np.pad(filtered, (0, src_len - len(filtered)))
+        out_len = int(src_len * 16000 / 24000)
+        if out_len < 1:
+            return b"", {"in_tail": new_tail}
+        indices = np.linspace(0, src_len - 1, out_len)
+        x0 = np.floor(indices).astype(np.int64)
+        x1 = np.minimum(x0 + 1, src_len - 1)
+        frac = indices - x0
+        out = filtered[:src_len][x0] * (1.0 - frac) + filtered[:src_len][x1] * frac
+        out = np.clip(out, -32768, 32767).astype(np.int16)
+        return out.tobytes(), {"in_tail": new_tail}
+
+    # ----- streaming mode (Gemini Live chunks) -----
+    st = state or {}
+    in_tail: np.ndarray | None = st.get("in_tail")
+    in_pos = st.get("in_pos", 0)
+    next_j = st.get("next_j", 0)
+
+    # Overlap-save: prepend last chunk's input tail (65 samples)
     if in_tail is not None and len(in_tail) > 0:
         padded = np.concatenate([in_tail, src])
     else:
-        pad = src[:_FILTER_DELAY][::-1] if src_len >= _FILTER_DELAY else np.full(_FILTER_DELAY, src[0])
+        pad = src[:_STREAM_TAIL][::-1] if src_len >= _STREAM_TAIL else np.full(_STREAM_TAIL, src[0])
         padded = np.concatenate([pad, src])
 
-    # Save last _FILTER_DELAY input samples for next chunk
-    new_tail = src[-_FILTER_DELAY:].copy() if src_len >= _FILTER_DELAY else src.copy()
+    if src_len >= _STREAM_TAIL:
+        new_tail = src[-_STREAM_TAIL:].copy()
+    else:
+        pad_n = _STREAM_TAIL - src_len
+        new_tail = np.concatenate([np.full(pad_n, src[0]), src])
 
-    # Overlap-save FIR: output has exactly src_len samples
+    # len(filtered) = src_len + 1 (65 tail + src_len -> 64 overlap)
     filtered = np.convolve(padded, _LPF_TAPS, mode="valid")
-    # len(filtered) = len(padded) - _FILTER_DELAY = src_len
+    f_max = len(filtered) - 1
 
-    # Linear interpolation to 16kHz
-    out_len = int(src_len * 16000 / 24000)
-    if out_len < 1:
-        return b"", {"in_tail": new_tail}
-    indices = np.linspace(0, src_len - 1, out_len)
-    x0 = np.floor(indices).astype(np.int64)
-    x1 = np.minimum(x0 + 1, src_len - 1)
-    frac = indices - x0
-    out = filtered[:src_len][x0] * (1.0 - frac) + filtered[:src_len][x1] * frac
+    # Output indices this chunk can fully interpolate: m = j*1.5 + _STREAM_OFF - in_pos
+    # must stay within [0, f_max]. next_j (not ceil(in_pos/1.5)) keeps the grid
+    # contiguous even when chunk sizes don't align with the 1.5-sample step.
+    j1 = int(np.floor((in_pos + src_len - 33) / 1.5))
+    n = j1 - next_j + 1
+    if n < 1:
+        return b"", {"in_tail": new_tail, "in_pos": in_pos + src_len, "next_j": next_j}
+
+    j = np.arange(next_j, next_j + n, dtype=np.float64)
+    m = np.maximum(j * 1.5 + _STREAM_OFF - in_pos, 0.0)
+    x0 = np.floor(m).astype(np.int64)
+    x1 = np.minimum(x0 + 1, f_max)
+    frac = m - x0
+    out = filtered[x0] * (1.0 - frac) + filtered[x1] * frac
     out = np.clip(out, -32768, 32767).astype(np.int16)
-    return out.tobytes(), {"in_tail": new_tail}
+    return out.tobytes(), {"in_tail": new_tail, "in_pos": in_pos + src_len, "next_j": next_j + n}
 
 
 def load_background_audio(path: str, target_sr: int = 16000) -> Optional[np.ndarray]:
@@ -104,6 +154,12 @@ def pcm_rms_norm(pcm: np.ndarray) -> float:
 def pcm_resample(pcm_bytes: bytes, in_sr: int, out_sr: int) -> bytes:
     if in_sr == out_sr:
         return pcm_bytes
+    # Use the anti-aliased windowed-sinc FIR resampler for the common
+    # 24 kHz -> 16 kHz path (greeting PCM, TTS fallback). audioop.ratecv
+    # produces harsh/metallic artifacts that make the audio sound robotic/AI.
+    if in_sr == 24000 and out_sr == 16000:
+        out, _ = resample_24k_to_16k_numpy(pcm_bytes, None)
+        return out
     out, _ = audioop.ratecv(pcm_bytes, 2, 1, in_sr, out_sr, None)
     return out
 
@@ -147,16 +203,24 @@ def mix_voice_and_background_tick(
 
 
 def pop_l16_chunk(queue: bytearray, chunk_bytes: int) -> bytes:
+    """Pop a chunk from the queue. When the queue has fewer bytes than needed,
+    pad with digital silence (zeros) instead of repeating the last sample —
+    repeated non-zero samples during buffer underruns sound like a buzz on the
+    live call."""
     if len(queue) >= chunk_bytes:
         out = bytes(queue[:chunk_bytes])
         del queue[:chunk_bytes]
         return out
     if len(queue) > 0:
         n = len(queue)
-        out = bytes(queue) + b"\x00" * (chunk_bytes - n)
+        out = bytes(queue)
         queue.clear()
+        # Pad remaining bytes with silence
+        remaining = chunk_bytes - n
+        out += b"\x00\x00" * (remaining // 2)
         return out
-    return b"\x00" * chunk_bytes
+    # Empty queue: pad entirely with silence
+    return b"\x00\x00" * (chunk_bytes // 2)
 
 
 _PLAY_TPL = (

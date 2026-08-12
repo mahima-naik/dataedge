@@ -166,7 +166,17 @@ async def _vobiz_answer_impl(
             proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
             dyn_base = f"{proto}://{req_host}"
 
-    base = (dyn_base or role_base or settings.vobiz_public_base_url or "").rstrip("/")
+    env_base = (settings.vobiz_public_base_url or "").rstrip("/")
+    # CRITICAL: Hostinger's reverse proxy blocks WebSocket upgrades (101). If the
+    # role state still stores a .hstgr.cloud public_url, bypass it with the env
+    # setting (which should point to the direct VPS IP /nip.io domain).
+    if role_base and "hstgr.cloud" in role_base.lower() and env_base and "hstgr.cloud" not in env_base.lower():
+        logger.info(
+            "Vobiz answer: overriding role public_url {} with env {} (Hostinger proxy blocks WS)",
+            role_base, env_base,
+        )
+        role_base = env_base
+    base = (dyn_base or role_base or env_base or "").rstrip("/")
     stream_base = (settings.vobiz_stream_public_base_url or "").strip().rstrip("/") or base
     wss_url = stream_base.replace("https://", "wss://").replace("http://", "ws://") + "/ws/vobiz"
 

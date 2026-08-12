@@ -177,9 +177,7 @@ def enrich_lead_for_console(lead: dict) -> dict:
     if log_id_raw:
         out["log_id"] = log_id_raw
         try:
-            from services.call_recording import resolve_session_recording_path
-
-            rp = resolve_session_recording_path(log_id_raw)
+            rp = _resolve_recording_cached(log_id_raw)
             out["recording_available"] = bool(rp and rp.is_file())
             if out["recording_available"]:
                 role_key = normalize_console_role(str(out.get("role") or "data_edge"))
@@ -195,6 +193,8 @@ def enrich_lead_for_console(lead: dict) -> dict:
         str(out.get("disposition") or aj.get("disposition") or "").strip()
     )
     out["disposition"] = disp
+    if aj.get("disposition_overridden"):
+        out["disposition_overridden"] = True
     if "summary" not in out or not out["summary"]:
         out["summary"] = str(aj.get("summary") or "")
     if aj.get("rating") is not None:
@@ -272,6 +272,25 @@ def enrich_lead_for_console(lead: dict) -> dict:
     return out
 
 
+# Recording path cache to avoid repeated FS glob searches per lead
+_RECORDING_PATH_CACHE: dict[str, object] = {}
+_RECORDING_CACHE_MAX = 500
+
+
+def _resolve_recording_cached(log_id: str):
+    """Cache recording path lookups to avoid repeated FS glob per lead."""
+    if not log_id:
+        return None
+    if log_id in _RECORDING_PATH_CACHE:
+        return _RECORDING_PATH_CACHE[log_id]
+    if len(_RECORDING_PATH_CACHE) >= _RECORDING_CACHE_MAX:
+        _RECORDING_PATH_CACHE.clear()
+    from services.call_recording import resolve_session_recording_path
+    rp = resolve_session_recording_path(log_id)
+    _RECORDING_PATH_CACHE[log_id] = rp
+    return rp
+
+
 # Fields safe to send to the browser (omit multi-KB ``analysis`` blobs).
 _SLIM_LEAD_KEYS = (
     "id",
@@ -284,6 +303,7 @@ _SLIM_LEAD_KEYS = (
     "status",
     "duration_sec",
     "disposition",
+    "disposition_overridden",
     "summary",
     "rating",
     "start_time",
@@ -500,11 +520,12 @@ def build_campaign_state_dashboard_fields(role: str, leads: list[dict]) -> dict[
 
     from core.storage import (
         _count_open_inbounds_for_role_sync,
-        _get_leads_with_outbound_activity_sync,
+        _get_leads_with_outbound_activity_lightweight_sync,
         _inbound_counts_on_calendar_dates_sync,
     )
 
-    outbound_rows = _get_leads_with_outbound_activity_sync(role)
+    # Use lightweight query (no analysis/extra blobs) for timeline/chart aggregation
+    outbound_rows = _get_leads_with_outbound_activity_lightweight_sync(role)
     enriched_for_timeline = [enrich_lead_for_console(dict(l)) for l in outbound_rows]
 
     open_inbounds = _count_open_inbounds_for_role_sync(role)

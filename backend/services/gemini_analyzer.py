@@ -15,6 +15,7 @@ from services.analysis_prompt import (
     parse_json_from_text,
     result_from_json,
 )
+from services.gemini_tts import normalize_gemini_model
 
 
 async def analyze_gemini(transcript_text: str) -> dict:
@@ -35,7 +36,7 @@ async def analyze_gemini(transcript_text: str) -> dict:
     if not key:
         raise RuntimeError("GEMINI_CALL_ANALYSIS_API_KEY / GEMINI_API_KEY is not set")
 
-    model = (settings.gemini_call_analysis_model or "gemini-2.0-flash").strip()
+    model = normalize_gemini_model(settings.gemini_call_analysis_model or "gemini-2.0-flash")
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={key}"

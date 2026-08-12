@@ -90,15 +90,12 @@ async def capture_live_greeting_pcm(
     voice = settings.gemini_live_voice
     model = settings.gemini_live_model
     language_code = settings.gemini_live_language_code
-    # Opening capture uses clientContent nudge — ultra VAD (data_edge calls) can stall capture.
-    vad_ultra = False
 
     setup = build_live_setup(
         model=model,
         system_instruction=system_prompt,
         voice=voice,
         language_code=language_code,
-        vad_ultra=vad_ultra,
     )
 
     gemini_url, _gem_headers = build_gemini_live_url_and_headers(api_key)
@@ -130,11 +127,10 @@ async def capture_live_greeting_pcm(
                 return
 
     logger.info(
-        "Live greeting capture: role={} voice={} model={} vad_ultra={} bytes_target=opening",
+        "Live greeting capture: role={} voice={} model={} bytes_target=opening",
         role,
         voice,
         model,
-        vad_ultra,
     )
 
     async with ws_client.connect(
@@ -167,6 +163,56 @@ async def capture_live_greeting_pcm(
     return bytes(collected), sr
 
 
+def _declick_pcm(pcm: bytes, sr: int = 24000, threshold: int = 8000) -> bytes:
+    """Remove isolated single-sample impulse spikes from captured PCM.
+
+    A single-sample spike at index *k* produces two large first-differences:
+    d[k-1] = |src[k] - src[k-1]| and d[k] = |src[k+1] - src[k]|, while the
+    differences on either side (d[k-2], d[k+1]) remain small.  We detect this
+    pattern — a pair of consecutive large differences bracketed by small ones —
+    and replace the anomalous sample with the linear interpolation of its
+    neighbours.
+    """
+    import numpy as np
+
+    src = np.frombuffer(pcm, dtype=np.int16).astype(np.float64)
+    if len(src) < 6:
+        return pcm
+
+    d = np.abs(np.diff(src))
+    half = threshold / 2
+
+    isolated = np.zeros(len(src), dtype=bool)
+    # Look for a large d[i-1] followed by a large d[i] with small surroundings:
+    #   d[i-2] < half  AND  d[i-1] > threshold  AND  d[i] > threshold  AND  d[i+1] < half
+    # This identifies sample i as the anomalous one (spike).
+    for i in np.where(d > threshold)[0]:
+        # Check if d[i] is the second leg of a spike pair (d[i-1] also large)
+        if i > 0 and d[i - 1] > threshold:
+            # Spike candidate at sample i (the peak)
+            before_ok = (i < 2) or (d[i - 2] < half)
+            after_ok = (i + 1 >= len(d)) or (d[i + 1] < half)
+            if before_ok and after_ok:
+                isolated[i] = True
+        # Also handle a single large d[i] with both sides small (2-sample-wide spike)
+        elif (i == 0 or d[i - 1] < half) and (i + 1 >= len(d) or d[i + 1] < half):
+            isolated[i + 1] = True
+
+    n_fixed = int(isolated.sum())
+    if n_fixed == 0:
+        return pcm
+
+    fixed = src.copy()
+    for idx in np.where(isolated)[0]:
+        left = fixed[idx - 1] if idx > 0 else fixed[idx + 1]
+        right = fixed[idx + 1] if idx < len(fixed) - 1 else fixed[idx - 1]
+        fixed[idx] = (left + right) / 2.0
+
+    out = np.clip(fixed, -32768, 32767).astype(np.int16).tobytes()
+    logger.info("_declick_pcm: repaired {} isolated spikes in {}s of {}kHz PCM", n_fixed, len(src) / sr, sr // 1000)
+    return out
+
+
 def save_greeting_pcm_file(
     role: str,
     pcm: bytes,
@@ -179,6 +225,7 @@ def save_greeting_pcm_file(
     import hashlib
 
     role = normalize_console_role(role)
+    pcm = _declick_pcm(pcm, sample_rate)
     out_path, meta_path = greeting_pcm_paths(role, variant)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(pcm)

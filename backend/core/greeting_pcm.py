@@ -45,6 +45,33 @@ def greeting_pcm_paths(role: str, variant: str = "") -> tuple[Path, Path]:
     return base / f"{stem}.pcm", base / f"{stem}.pcm.meta"
 
 
+def _greeting_spike_count(pcm: bytes, sr: int = 24000) -> float:
+    """Return isolated single-sample spike density (>8000 amplitude jump, quiet neighbours).
+
+    >20/s suggests a corrupted capture (WebSocket frame drops during Gemini Live).
+    """
+    import numpy as np
+
+    src = np.frombuffer(pcm, dtype=np.int16)
+    if len(src) < 10:
+        return 0.0
+    d = np.abs(np.diff(src.astype(np.int64)))
+    threshold = 8000
+    half = threshold / 2
+    count = 0
+    for i in np.where(d > threshold)[0]:
+        # Spike pair: d[i-1] large + d[i] large → sample i is the spike peak
+        if i > 0 and d[i - 1] > threshold:
+            before_ok = (i < 2) or (d[i - 2] < half)
+            after_ok = (i + 1 >= len(d)) or (d[i + 1] < half)
+            if before_ok and after_ok:
+                count += 1
+        # Single large d[i] with small neighbours → sample i+1 is the spike
+        elif (i == 0 or d[i - 1] < half) and (i + 1 >= len(d) or d[i + 1] < half):
+            count += 1
+    return count / max(len(src) / sr, 0.001)
+
+
 def _greeting_meta_matches(meta: dict, text: str) -> bool:
     """If meta has text_hash, require it to match current greeting text."""
     want = _text_hash(text)
@@ -84,13 +111,22 @@ def load_recorded_greeting_pcm(
         pcm = path.read_bytes()
         if not pcm:
             return None
+        spikes_per_sec = _greeting_spike_count(pcm, sr)
+        if spikes_per_sec > 20:
+            logger.warning(
+                "Greeting PCM for role={} has {:.1f} isolated spikes/sec — "
+                "likely corrupted capture. Re-capture recommended.",
+                role,
+                spikes_per_sec,
+            )
         label = f"{role}" + (f" ({variant})" if variant else "")
         logger.info(
-            "Loaded recorded greeting for role={} ({} bytes, sr={}, source={})",
+            "Loaded recorded greeting for role={} ({} bytes, sr={}, source={}, spikes/s={:.1f})",
             label,
             len(pcm),
             sr,
             meta.get("source", "unknown"),
+            spikes_per_sec,
         )
         return pcm, sr
     except Exception as exc:
@@ -119,12 +155,27 @@ def _write_greeting_cache_files(
 ) -> None:
     """Persist to both ``greeting_{role}.pcm`` (calls use this) and ``_latest`` cache."""
     h = _text_hash(text)
+
+    spikes_per_sec = _greeting_spike_count(pcm, sr)
+    if spikes_per_sec > 20:
+        from services.live_greeting_capture import _declick_pcm
+
+        logger.warning(
+            "Greeting for role={} has {:.1f} spikes/sec (source={}) — applying de-click filter.",
+            role,
+            spikes_per_sec,
+            source,
+        )
+        pcm = _declick_pcm(pcm, sr)
+        spikes_per_sec = _greeting_spike_count(pcm, sr)
+
     meta = {
         "text_hash": h,
         "voice": voice,
         "sr": int(sr),
         "source": source,
         "model": settings.gemini_live_model if source == "gemini_live_capture" else settings.gemini_tts_model,
+        "spikes_per_sec": round(spikes_per_sec, 1),
     }
     pcm_path, meta_path = greeting_pcm_paths(role)
     latest_pcm = _get_greeting_cache_path(role)
@@ -211,6 +262,16 @@ def _load_cached_greeting(role: str, text: str) -> Optional[Tuple[bytes, int]]:
         with open(cache_path, "rb") as f:
             pcm = f.read()
         sr = int(meta.get("sr", 24000))
+        spikes_per_sec = _greeting_spike_count(pcm, sr)
+        if spikes_per_sec > 20:
+            from services.live_greeting_capture import _declick_pcm
+
+            logger.warning(
+                "Cached greeting for {} has {:.1f} spikes/sec — applying de-click filter.",
+                role,
+                spikes_per_sec,
+            )
+            pcm = _declick_pcm(pcm, sr)
         if str(meta.get("source")) == "gemini_tts_rest":
             logger.warning(
                 "Loaded REST-TTS cached greeting for {} — consider re-capturing with Live in Configuration",

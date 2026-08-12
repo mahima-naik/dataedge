@@ -41,6 +41,9 @@ venv*/
 .DS_Store
 Thumbs.db
 
+# Stray build archives
+*.tar.gz
+
 # Database & data
 *.db
 *.sqlite

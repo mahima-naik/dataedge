@@ -335,6 +335,11 @@ async def factory_start_call(agent_id: str, req: StartCallRequest):
         v_token = v_cfg.get("auth_token") or settings.vobiz_auth_token
         v_from = v_cfg.get("from_number") or settings.vobiz_from_number
         v_base = (v_cfg.get("public_url") or settings.vobiz_public_base_url or "").rstrip("/")
+        # Bypass Hostinger proxy if role state stores .hstgr.cloud URL
+        if "hstgr.cloud" in v_base.lower() and settings.vobiz_public_base_url:
+            _env_url = settings.vobiz_public_base_url.rstrip("/")
+            if "hstgr.cloud" not in _env_url.lower():
+                v_base = _env_url
 
         if not v_auth_id or not v_token or not v_base:
             raise HTTPException(status_code=400, detail="Telephony not configured")

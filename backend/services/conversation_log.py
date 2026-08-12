@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,26 @@ from typing import Any
 from config import settings
 
 _lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Non-blocking writes (spec #2 / #17). `append_turn` / `append_artifact` /
+# `append_session_meta` are called from the real-time audio loop on turn
+# boundaries. The synchronous open()+write() must not run on the event loop, so
+# records are serialised onto a single dedicated writer thread. Order is
+# preserved because the executor runs them FIFO.
+# ---------------------------------------------------------------------------
+
+_write_executor: Optional[ThreadPoolExecutor] = None
+_write_exec_lock = threading.Lock()
+
+
+def _writer() -> ThreadPoolExecutor:
+    global _write_executor
+    if _write_executor is None:
+        with _write_exec_lock:
+            if _write_executor is None:
+                _write_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convlog")
+    return _write_executor
 
 
 def _utc_now_iso() -> str:
@@ -104,6 +125,17 @@ def append_turn(
 
 
 def _write_record(session_id: str, record: dict[str, Any], base_dir: Optional[str] = None) -> None:
+    try:
+        _writer().submit(_write_record_sync, session_id, record, base_dir)
+    except Exception as exc:  # noqa: BLE001
+        # Fallback to synchronous write if the executor is unavailable.
+        try:
+            _write_record_sync(session_id, record, base_dir)
+        except Exception:
+            pass
+
+
+def _write_record_sync(session_id: str, record: dict[str, Any], base_dir: Optional[str] = None) -> None:
     d = _log_dir_for_session(session_id, base_dir)
     path = d / f"{_safe_filename(session_id)}.jsonl"
     line = json.dumps(record, ensure_ascii=False) + "\n"

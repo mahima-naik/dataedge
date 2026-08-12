@@ -10,6 +10,7 @@ import httpx
 from loguru import logger
 
 from config import settings
+from services.gemini_tts import normalize_gemini_model
 
 def _recording_dirs() -> list[Path]:
     """Resolve all recording directories to search."""
@@ -71,7 +72,7 @@ async def transcribe_audio(log_id: str, role: str = "data_edge") -> str | None:
     if not key:
         raise RuntimeError("GEMINI_API_KEY / GOOGLE_API_KEY is not set for transcription")
 
-    model = settings.gemini_call_analysis_model or "gemini-2.5-flash"
+    model = normalize_gemini_model(settings.gemini_call_analysis_model or "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
     with open(fp, "rb") as f:

@@ -77,13 +77,11 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
     system_prompt = apply_live_voice_turn_addon(system_prompt)
 
     gemini_url = GEMINI_LIVE_URL_TMPL.format(api_key=api_key)
-    vad_ultra = role == "data_edge"
     setup = build_live_setup(
         model=model,
         system_instruction=system_prompt,
         voice=voice,
         language_code=language_code,
-        vad_ultra=vad_ultra,
     )
 
     # Audio Recording Buffers
@@ -141,7 +139,7 @@ async def handle_browser_voice_ws(websocket: WebSocket) -> None:
             chunk_16k_bytes = int(16000 * 2 * 0.020)  # 20ms @ 16kHz = 640 bytes
             last_meaningful_t = time.perf_counter()
             is_generating = False
-            resample_state = None
+            resample_state = {}
             first_audio_chunk_logged = False
             first_user_audio_t = None
             is_playing_to_browser = False

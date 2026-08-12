@@ -296,6 +296,8 @@ def init_db(data_dir: Optional[Path | str] = None) -> Path:
         CREATE INDEX IF NOT EXISTS idx_leads_call_id ON leads(_call_id);
         CREATE INDEX IF NOT EXISTS idx_leads_log_id ON leads(_log_id);
         CREATE INDEX IF NOT EXISTS idx_leads_start_time ON leads(role, start_time DESC);
+        CREATE INDEX IF NOT EXISTS idx_leads_role_start_time ON leads(role, start_time);
+        CREATE INDEX IF NOT EXISTS idx_leads_role_log_id ON leads(role, _log_id);
     """)
     _commit_with_retry(conn)
 
@@ -462,6 +464,9 @@ def _get_conn() -> sqlite3.Connection:
         _LOCAL.conn.execute("PRAGMA busy_timeout=60000")
         _LOCAL.conn.row_factory = sqlite3.Row
         _LOCAL.conn.execute("PRAGMA foreign_keys = ON")
+        _LOCAL.conn.execute("PRAGMA synchronous=NORMAL")
+        _LOCAL.conn.execute("PRAGMA cache_size=-8000")
+        _LOCAL.conn.execute("PRAGMA temp_store=MEMORY")
     return _LOCAL.conn
 
 
@@ -697,8 +702,68 @@ def _count_leads_with_outbound_attempt_sync(role: str) -> int:
     return int(row["c"]) if row else 0
 
 
+async def get_leads_lightweight(role: str, limit: int = 2000, order: str = "created") -> list[dict]:
+    """Lightweight lead fetch — excludes 'extra' JSON blob but keeps 'analysis' for disposition calculation."""
+    return await asyncio.to_thread(_get_leads_lightweight_sync, role, limit, order)
+
+def _get_leads_lightweight_sync(role: str, limit: int = 2000, order: str = "created") -> list[dict]:
+    """Skips the 'extra' JSON column (AI prompt context) but keeps 'analysis' for disposition calculation."""
+    conn = _get_conn()
+    query = """
+        SELECT id, role, name, phone, email, company, details, segment, status,
+               analysis, start_time, duration_sec, error, _log_id, _call_id,
+               created_at, updated_at, file_id
+        FROM leads WHERE role = ?
+    """
+    params: list = [role]
+    if (order or "created").strip().lower() == "activity":
+        query += """
+         ORDER BY
+             CASE WHEN start_time IS NOT NULL AND CAST(start_time AS REAL) > 0
+                  THEN CAST(start_time AS REAL) ELSE 0.0 END DESC,
+             updated_at DESC,
+             created_at DESC
+        """
+    else:
+        query += " ORDER BY created_at DESC"
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 async def get_leads_with_outbound_activity(role: str, limit: int = 32000) -> list[dict]:
     return await asyncio.to_thread(_get_leads_with_outbound_activity_sync, role, limit)
+
+async def get_leads_with_outbound_activity_lightweight(role: str, limit: int = 32000) -> list[dict]:
+    """Lightweight variant — excludes 'extra' blob but keeps 'analysis' for disposition calculation."""
+    return await asyncio.to_thread(_get_leads_with_outbound_activity_lightweight_sync, role, limit)
+
+def _get_leads_with_outbound_activity_lightweight_sync(role: str, limit: int = 32000) -> list[dict]:
+    """Same as _get_leads_with_outbound_activity_sync but skips 'extra' column (keeps analysis for dispo)."""
+    role = (role or "data_edge").strip().lower()
+    lim = max(1, min(int(limit), 50000))
+    conn = _get_conn()
+    rows = conn.execute(
+        """
+        SELECT id, role, name, phone, email, company, segment, status,
+               analysis, start_time, duration_sec, error, _log_id, _call_id,
+               created_at, updated_at
+        FROM leads WHERE role = ?
+          AND (
+                (COALESCE(TRIM(COALESCE(_log_id, '')), '') != '')
+             OR (start_time IS NOT NULL AND CAST(start_time AS REAL) > 0)
+          )
+        ORDER BY
+             CASE WHEN start_time IS NOT NULL AND CAST(start_time AS REAL) > 0
+                  THEN CAST(start_time AS REAL) ELSE 0.0 END DESC,
+             updated_at DESC
+        LIMIT ?
+        """,
+        (role, lim),
+    ).fetchall()
+    return [_row_to_dict(row) for row in rows]
 
 def _get_leads_with_outbound_activity_sync(role: str, limit: int = 32000) -> list[dict]:
     """All campaign leads that have been bridged/outbound-dialed (log id or ``start_time``).
@@ -1928,7 +1993,8 @@ def _list_recent_manual_calls_sync(role: str, limit: int = 15) -> list[dict]:
 # --- Helpers ---
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
-    out = {key: row[key] for key in row.keys()}
+    """Convert a sqlite3.Row to dict. Uses dict() constructor for speed."""
+    out = dict(row)
     # Decode the leads.extra JSON blob so callers get a normal dict and can
     # use it as ``lead["extra"]["rfq_subject"]`` without re-parsing.
     raw = out.get("extra")

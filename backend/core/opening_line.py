@@ -7,10 +7,7 @@ import re
 
 _ROLE_FALLBACK_GREETINGS = {
     "data_edge": (
-        "Hi, I'm Priya, a career counselor from Data Edge. "
-        "You had recently shown interest in building a career in technology, "
-        "so I just wanted to take two minutes to explain how we can help. "
-        "Is this a good time to talk?"
+        "Hi, this is Priya from Data Edge. I'm a career counselor — got a quick minute?"
     ),
 }
 

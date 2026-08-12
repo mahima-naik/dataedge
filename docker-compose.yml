@@ -1,0 +1,52 @@
+version: "3.8"
+
+services:
+  vernika:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vernika-bridge
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/backend/data
+      - ./backend:/app/backend:ro
+      - ./frontend:/app/frontend:ro
+      - ./prompts:/app/backend/prompts:ro
+      - ./scripts:/app/backend/scripts:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  openwa:
+    image: openwa/openwa:latest
+    container_name: openwa-gateway
+    restart: unless-stopped
+    ports:
+      - "2785:2785"
+    env_file:
+      - .env
+    environment:
+      - OPENWA_API_KEY=${OPENWA_API_KEY}
+      - OPENWA_SESSION_ID=${OPENWA_SESSION_ID}
+    volumes:
+      - ./openwa-data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

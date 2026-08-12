@@ -171,20 +171,37 @@ You must return a JSON object with EXACTLY these keys:
   - "details": Detailed explanation of what exactly to send, say, or do.
 - "disposition": one of ["Interested", "Not Interested", "Call Later", "Busy", "Answered", "Wrong Number"]
   Rules for disposition:
-  - "Interested": ANY of these count as Interested (be generous):
-    * Asks to send email, mail, WhatsApp message, brochure, details, pricing, quote, or write-up
-    * Gives or offers an email address / asks you to mail kar / bhej dijiye / share on WhatsApp
-    * Requests information via WhatsApp in any form: "WhatsApp me the details", "message me on WhatsApp", "text me on WhatsApp", "ping me on WhatsApp", "contact me on WhatsApp", "share through WhatsApp", "send it on WhatsApp", "share the details on WhatsApp", "please send the brochure on WhatsApp"
-    * Any paraphrase where the user wants details/info/brochure sent to them on WhatsApp — even if the exact wording varies
-    * Says they will check, review, revert, or "our team will decide" after receiving info
-    * Agrees to a demo, meeting, or follow-up; says "okay send it", "I guess", mild yes
-    * Any follow-up question about the product/service (not just IVR menu prompts)
-    * Examples that MUST be Interested: "send me the details on email", "mail kar dijiye", "I will check and get back", "give me your email I'll send", "WhatsApp pe bhej do", "WhatsApp me the course details", "message me on WhatsApp", "send the details through WhatsApp"
+  - "Interested": Mark Interested ONLY when the conversation clearly demonstrates genuine interest in the course/program. Genuine interest requires a meaningful and reasonably complete conversation where the customer:
+    * Engages with the counselor about their career/learning needs
+    * Shows genuine interest in one or more DataEdge programs
+    * Discusses their goals, requirements, or reasons for considering the course
+    * Responds positively to the course/program explanation or recommendation
+    * Shows intent to explore the program further, AND/OR
+    * Takes a meaningful next step because of that interest
+    Examples that ARE Interested (genuine interest in the course is clear):
+    * "Yes, I'm interested in the Data Analytics course."
+    * "I want to learn AI because I'm looking for a career change."
+    * "This course sounds relevant to me. Can you explain the details?"
+    * "I'm interested. Send me the brochure and I'll go through it."
+    * "I need some time to discuss it, but I am interested in the course."
+    * "Can you send me the details? I'll review them and get back to you."
+    * "I'm interested in the program. You can call me later."
+    * "I want to know more about the course and its curriculum."
+    * "I'm interested in the AI course. I have a meeting now, so call me tomorrow."
+  - "Interested" (hesitation about TIMING, not interest): a customer who already demonstrated genuine interest in the course earlier in the conversation and then says "I'm interested, but I need some time. I'll let you know later" or "The course is relevant to me. Send me the brochure and I'll discuss it and get back to you" IS Interested — the hesitation is about timing/decision-making, not lack of interest.
   - "Not Interested": only clear, direct rejection. "Stop calling", "take me off your list", "not interested" said firmly. Do NOT treat soft/mild responses as Not Interested.
-  - "Answered": ONLY when there was no meaningful sales conversation (IVR only, wrong person with no contact request, or callee never engaged). Do NOT use Answered when they asked for materials to be sent.
+  - Do NOT mark Interested merely because the customer (these are weak signals, NOT sufficient on their own):
+    * Asks for a WhatsApp brochure, course details, or a demo
+    * Agrees to receive information on WhatsApp/email
+    * Says "send me the details" or "I'll check and let you know"
+    * Asks for a callback without showing genuine interest in the course
+    * Gives a polite or non-committal response
+    * Says "I'll let you know later" WITHOUT having already demonstrated genuine course interest
+  - "Answered": use when there was no meaningful sales conversation or only weak/non-committal signals with NO demonstrated genuine interest (e.g. a bare "send me the brochure" with no course engagement, IVR only, wrong person with no contact request, callee never engaged, or a language barrier where the customer's question was not addressed).
   - "Call Later": prospect explicitly asks to be called at a future time/date.
   - "Busy": prospect says they are busy right now without scheduling a callback.
   - "Wrong Number": prospect says wrong number / person doesn't exist.
+  - CRITICAL: Consider the ENTIRE conversation, not a single sentence or keyword. Keywords like "brochure", "WhatsApp", "demo", "callback", "details", "later", "interested" are NOT sufficient on their own. Before marking Interested, ask: "Based on the complete conversation, has the customer genuinely shown interest in pursuing or seriously exploring a DataEdge course/program?" If YES → Interested. If NO or UNCLEAR → do NOT mark Interested. Never inflate the interested count.
 - "emotion_label": one of ["Positive", "Neutral", "Skeptical", "Frustrated", "Confused", "Angry", "Unknown"]
 - "emotion_confidence": number 0.0-1.0
 - "emotion_rationale": one sentence explaining the callee's emotional tone

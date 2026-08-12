@@ -78,7 +78,6 @@ async def test_role_once(role: str, attempt: int) -> dict:
         system_instruction=system_prompt,
         voice=voice,
         language_code=language_code,
-        vad_ultra=False
     )
     
     gemini_url = GEMINI_LIVE_URL_TMPL.format(api_key=api_key)

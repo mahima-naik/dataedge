@@ -70,6 +70,19 @@ def _parse_pcm_rate_from_mime(mime: str) -> int:
     return 24000
 
 
+def normalize_gemini_model(model: str) -> str:
+    """Strip a leading ``models/`` prefix from a Gemini model name.
+
+    The REST/Live URLs already include ``/v1beta/models/``, so a configured value
+    like ``models/gemini-2.5-flash-preview-tts`` must NOT keep its prefix — otherwise
+    the URL becomes ``.../v1beta/models/models/...`` and Gemini returns HTTP 404.
+    """
+    m = (model or "").strip()
+    if m.startswith("models/"):
+        return m[len("models/"):]
+    return m
+
+
 def _tts_prompt_text(text: str, style_mode: Literal["full", "opening", "none"]) -> str:
     if style_mode == "full":
         style = (settings.gemini_tts_style_prompt or "").strip()
@@ -92,7 +105,7 @@ async def gemini_synthesize_pcm(
     if not key:
         raise RuntimeError("GEMINI_API_KEY / GOOGLE_API_KEY is not set")
 
-    model = (settings.gemini_tts_model or "gemini-2.0-flash").strip()
+    model = normalize_gemini_model(settings.gemini_tts_model or "gemini-2.0-flash")
     v = (voice or settings.gemini_tts_voice or "Leda").strip()
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"

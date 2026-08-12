@@ -6,6 +6,11 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
+try:
+    import resource as _resource
+except ImportError:  # Windows
+    _resource = None
+
 from fastapi import FastAPI
 from loguru import logger
 
@@ -24,6 +29,16 @@ from services.vobiz_bridge import close_vobiz_client
 async def lifespan(app: FastAPI):
     del app
     logger.info("Starting bridge server…")
+
+    # ── Memory diagnostics ────────────────────────────────────────────────
+    _rss_mb = 0
+    if _resource is not None:
+        try:
+            _rss_mb = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss / 1024  # Linux: KB → MB
+            logger.info("Startup RSS: {:.0f} MB", _rss_mb)
+        except Exception:
+            pass
+
     data_root = (os.environ.get("VERN_DATA_DIR") or "").strip()
     if data_root:
         data_dir = os.path.abspath(data_root)
@@ -219,7 +234,46 @@ async def lifespan(app: FastAPI):
             logger.warning("SIP Bridge failed to start: {}", exc)
 
     logger.info("Bridge ready on {}:{}", settings.host, settings.port)
+
+    # ── Memory watchdog — detect OOM pressure before kernel kills us ──────
+    # On Hostinger VPS (1-2 GB RAM), the OOM killer fires without warning.
+    # This task logs RSS every 60s and triggers gc.collect() when we exceed
+    # 80% of MemoryMax so we shed weight before the kernel does it for us.
+    _MEMORY_MAX_MB = 1536  # must match dataedge.service MemoryMax
+
+    async def _memory_watchdog():
+        import gc as _gc
+        if _resource is None:
+            return
+        try:
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    _rss = _resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss / 1024
+                    if _rss > _MEMORY_MAX_MB * 0.8:
+                        logger.warning(
+                            "MEMORY WARNING: RSS={:.0f}MB ({:.0f}% of limit) — running gc.collect()",
+                            _rss, _rss / _MEMORY_MAX_MB * 100,
+                        )
+                        _gc.collect()
+                    elif _rss > _MEMORY_MAX_MB * 0.6:
+                        logger.debug("Memory watchdog: RSS={:.0f}MB ({:.0f}%)", _rss, _rss / _MEMORY_MAX_MB * 100)
+                except Exception:
+                    pass
+        except asyncio.CancelledError:
+            pass
+
+    _mem_task = asyncio.create_task(_memory_watchdog(), name="memory_watchdog")
+
     yield
+
+    # Cancel memory watchdog first
+    if _mem_task and not _mem_task.done():
+        _mem_task.cancel()
+        try:
+            await _mem_task
+        except asyncio.CancelledError:
+            pass
 
     if scheduler_task and not scheduler_task.done():
         scheduler_task.cancel()

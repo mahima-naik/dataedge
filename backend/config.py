@@ -111,12 +111,7 @@ class Settings:
     campaign_quiet_end: str = (os.getenv("CAMPAIGN_QUIET_END", "09:30").strip() or "09:30")
 
     # Gemini Live API (native speech-to-speech for sub-800ms latency on phone calls)
-    # Valid Google AI Studio Multimodal Live model: models/gemini-2.0-flash-exp
-    gemini_live_model: str = (
-        "models/gemini-2.0-flash-exp"
-        if ("3.1" in os.getenv("GEMINI_LIVE_MODEL", "") or "3-1" in os.getenv("GEMINI_LIVE_MODEL", ""))
-        else os.getenv("GEMINI_LIVE_MODEL", "models/gemini-2.0-flash-exp").strip()
-    )
+    gemini_live_model: str = os.getenv("GEMINI_LIVE_MODEL", "models/gemini-3.1-flash-live-preview").strip()
     gemini_live_voice: str = os.getenv("GEMINI_LIVE_VOICE", "Leda").strip()
     gemini_live_language_code: str = os.getenv("GEMINI_LIVE_LANGUAGE_CODE", "en-IN").strip()
     # When True: skip disk/primed PCM opener — Gemini Live speaks the greeting (same engine as the call).
@@ -137,11 +132,12 @@ class Settings:
     )
 
     # Playout jitter buffer safety margin in seconds (default: 0.06 = 60ms).
-    # Lowered from 0.40s → 0.12s → 0.06s → 0.03s to reduce first-audio-chunk latency.
-    # 30ms = 1.5 packets @ 20ms — minimal buffering for low-latency voice.
-    # Increase to 0.06-0.12 only if audio stuttering occurs on high-jitter networks.
+    # 150ms prebuffer: absorbs timing gaps between Gemini audio chunks and mixer
+    # batching. Previous 30ms was too small — caused word-level stutter when
+    # ws.send_text() blocks ~280ms on a 2-core VPS, creating burst/gap patterns.
+    # 150ms = 7.5 packets @ 20ms — enough to smooth playout without noticeable latency.
     vobiz_playout_prebuffer_seconds: float = float(
-        os.getenv("VOBIZ_PLAYOUT_PREBUFFER_SECONDS", "0.03")
+        os.getenv("VOBIZ_PLAYOUT_PREBUFFER_SECONDS", "0.30")
     )
     # Browser voice test prebuffer (default: 0.150 = 150ms).
     # Accumulates this much audio before starting browser playout.

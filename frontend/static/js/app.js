@@ -219,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         setInterval(loadSchedules, 30000);
         syncState();
-        syncInterval = setInterval(syncState, 15000);
+        syncInterval = setInterval(syncState, 20000);
 
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
@@ -227,7 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 if (!syncInterval) {
                     syncState();
-                    syncInterval = setInterval(syncState, 15000);
+                    syncInterval = setInterval(syncState, 20000);
                 }
             }
         });

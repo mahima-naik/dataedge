@@ -6,6 +6,9 @@ let chartWeekday = null;
 let chartHourly = null;
 let sparkCharts = {};
 
+let _lastChartUpdateTime = 0;
+const CHART_UPDATE_THROTTLE_MS = 3000;
+
 const CHART_COLORS = ['#DC2626', '#16A34A', '#D97706', '#9333EA', '#DB2777', '#EA580C', '#0891B2', '#65A30D'];
 const CHART_WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -207,6 +210,10 @@ function initCharts() {
 }
 
 function updateCharts(leads, dispositionCounts, callbackCountsByDate, serverTimeline, chartExtras) {
+  var now = Date.now();
+  if (now - _lastChartUpdateTime < CHART_UPDATE_THROTTLE_MS) return;
+  _lastChartUpdateTime = now;
+
   var st = serverTimeline && typeof serverTimeline === 'object' ? serverTimeline : {};
   var extras = chartExtras && typeof chartExtras === 'object' ? chartExtras : {};
   var dc = dispositionCounts || {};

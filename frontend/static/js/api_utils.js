@@ -247,8 +247,8 @@ function softInterestInLeadText(lead) {
 /** Match ``enrich_lead_for_console`` / ``effective_disposition_console`` (disposition may live in ``analysis`` only). */
 function effectiveDispo(lead) {
     const aj = _parseAnalysisBlobClient(lead && lead.analysis);
-    if (aj.disposition_overridden) {
-        return String(aj.disposition || 'Answered').trim();
+    if (aj.disposition_overridden || (lead && lead.disposition_overridden)) {
+        return String(aj.disposition || (lead && lead.disposition) || 'Answered').trim();
     }
     const d = String((lead && lead.disposition) || aj.disposition || '').trim();
     if (d && d !== 'Answered') return d;

@@ -660,12 +660,21 @@ async def _resolve_lead_session_log_id(role: str, row: dict) -> str:
     phone = _norm_phone_digits(row.get("phone"))
     if not phone:
         return ""
-    for sibling in await lead_storage.get_leads(role, limit=20_000):
-        if _norm_phone_digits(sibling.get("phone")) != phone:
-            continue
-        sid = str(sibling.get("_log_id") or sibling.get("log_id") or "").strip()
-        if sid:
-            return sid
+    # Use targeted query instead of loading all leads
+    from core import storage as _lead_storage
+    role_key = (role or "data_edge").strip().lower()
+    conn = _lead_storage._get_conn()
+    try:
+        # Search for leads with the same phone that have a log_id
+        tail = phone[-10:] if len(phone) >= 10 else phone
+        rows = conn.execute(
+            "SELECT _log_id FROM leads WHERE role = ? AND phone LIKE ? AND _log_id IS NOT NULL AND trim(_log_id) != '' LIMIT 1",
+            (role_key, f"%{tail}"),
+        ).fetchall()
+        if rows:
+            return str(rows[0]["_log_id"] or "").strip()
+    except Exception:
+        pass
     return ""
 
 
@@ -820,9 +829,9 @@ async def campaign_manifest_preview(
     cache_key = f"{role}:{limit}"
     if cache_key in _MANIFEST_CACHE:
         cached_time, cached_val = _MANIFEST_CACHE[cache_key]
-        if now - cached_time < 10.0:
+        if now - cached_time < 20.0:
             return cached_val
-    rows = await lead_storage.get_leads(
+    rows = await lead_storage.get_leads_lightweight(
         role, limit=int(limit) if int(limit) > 0 else 9_999_999_999, order="activity"
     )
     enriched = [slim_lead_for_api(dict(r), role=role) for r in rows]
@@ -847,10 +856,11 @@ async def get_campaign_status(
 
         counts = await lead_storage.get_lead_counts(role)
         sample_cap = min(int(chart_sample_limit), 10000)
-        chart_rows = await lead_storage.get_leads(role, limit=sample_cap)
+        # Use lightweight query (no analysis/extra blobs) for chart data
+        chart_rows = await lead_storage.get_leads_lightweight(role, limit=sample_cap)
         dash = build_campaign_state_dashboard_fields(role, chart_rows)
         chart_leads = [
-            slim_lead_for_api(l, role=role) for l in dash.pop("leads_enriched", [])
+            slim_lead_for_api(dict(l), role=role) for l in dash.pop("leads_enriched", [])
         ]
         total_in_db = int(counts.get("total") or 0)
         dash["called_count"] = await lead_storage.count_leads_with_outbound_attempt(role)

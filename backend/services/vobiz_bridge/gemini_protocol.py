@@ -17,38 +17,59 @@ GEMINI_LIVE_URL_TMPL = (
 )
 
 
+def _sanitize_start_sensitivity(value: str) -> str:
+    """Map any input to a valid Gemini Live ``StartOfSpeechSensitivity`` enum.
+
+    The Gemini Live API rejects free-form strings like ``START_SENSITIVITY_BALANCED``
+    (close code 1007). Valid values are the ``START_OF_SPEECH_SENSITIVITY_*`` enums.
+    """
+    v = (value or "").strip().upper()
+    if "HIGH" in v:
+        return "START_OF_SPEECH_SENSITIVITY_HIGH"
+    if "LOW" in v:
+        return "START_OF_SPEECH_SENSITIVITY_LOW"
+    # Balanced/unspecified/unknown → safest responsive default.
+    return "START_OF_SPEECH_SENSITIVITY_HIGH"
+
+
+def _sanitize_end_sensitivity(value: str) -> str:
+    """Map any input to a valid Gemini Live ``EndOfSpeechSensitivity`` enum."""
+    v = (value or "").strip().upper()
+    if "HIGH" in v:
+        return "END_OF_SPEECH_SENSITIVITY_HIGH"
+    if "LOW" in v:
+        return "END_OF_SPEECH_SENSITIVITY_LOW"
+    return "END_OF_SPEECH_SENSITIVITY_HIGH"
+
+
 def build_live_setup(
     *,
     model: str,
     system_instruction: str,
     voice: str,
     language_code: str,
-    vad_ultra: bool = False,
 ) -> dict:
     """Build Gemini Live ``setup``. When aggressive VAD is enabled in settings,
 
     Uses ``HIGH`` sensitivity for start/end of speech plus tuneable silence/prefix
-    (see ``GEMINI_LIVE_*`` env vars). VAD settings are consistent across all call types
-    to ensure uniform audio quality.
-
-    When ``vad_ultra=True``, uses tighter prefix padding and silence duration for
-    lower-latency turn detection (outbound calls where callee responds quickly).
+    (see ``GEMINI_LIVE_*`` env vars). VAD settings are consistent across all call
+    types and turn-taking paths so audio quality and latency are uniform.
     """
 
     realtime_input_config: dict[str, Any] = {}
     if settings.gemini_live_aggressive_activity_detection:
         import os
-        start_sens = os.getenv("GEMINI_LIVE_VAD_START_SENSITIVITY", "START_SENSITIVITY_LOW").strip()
-        end_sens = os.getenv("GEMINI_LIVE_VAD_END_SENSITIVITY", "END_SENSITIVITY_LOW").strip()
+        start_sens = _sanitize_start_sensitivity(
+            os.getenv("GEMINI_LIVE_VAD_START_SENSITIVITY", "")
+        )
+        end_sens = _sanitize_end_sensitivity(
+            os.getenv("GEMINI_LIVE_VAD_END_SENSITIVITY", "")
+        )
 
-        # Telephony-tuned timing: prevents phone speaker echo / micro-noise from cutting off AI mid-sentence
-        # Use env values directly (no hard floor) so ultra-low latency settings take effect.
-        if vad_ultra:
-            prefix_ms = max(32, int(settings.gemini_live_vad_prefix_padding_ms_ultra))
-            silence_ms = max(80, int(settings.gemini_live_vad_silence_duration_ms_ultra))
-        else:
-            prefix_ms = max(40, int(settings.gemini_live_vad_prefix_padding_ms))
-            silence_ms = max(120, int(settings.gemini_live_vad_silence_duration_ms))
+        # Telephony-tuned timing: prevents phone speaker echo / micro-noise from cutting off AI mid-sentence.
+        # Single consistent VAD profile for every call (no dual ultra/standard split).
+        prefix_ms = max(150, int(settings.gemini_live_vad_prefix_padding_ms))
+        silence_ms = max(300, int(settings.gemini_live_vad_silence_duration_ms))
 
         realtime_input_config = {
             "automaticActivityDetection": {
@@ -219,7 +240,7 @@ GEMINI_LIVE_URL_BASE = (
 
 
 def build_gemini_live_url_and_headers(api_key: str) -> tuple[str, dict]:
-    """Return (wss_url, additional_headers) for the Gemini Live WebSocket.
+    """Return (wss_url, extra_headers) for the Gemini Live WebSocket.
 
     Always use the query parameter "?key=" for authentication as the 
     Google AI Studio Gemini Live WebSocket API requires this format for both

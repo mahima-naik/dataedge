@@ -1,0 +1,62 @@
+[Unit]
+Description=PitchX Solutions — Data Edge AI Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/dataedge/backend
+
+# CRITICAL: Write ALL output to a file so crash errors are visible in journalctl -u dataedge
+StandardOutput=append:/var/log/dataedge/stdout.log
+StandardError=append:/var/log/dataedge/stderr.log
+
+# Single worker — Hostinger VPS has limited RAM (1-2GB).
+# Gunicorn with 4 UvicornWorkers = 4x Python processes = ~800MB+ just for workers.
+# Single uvicorn worker keeps RSS under 400MB, leaving room for Gemini WS + audio buffers.
+ExecStart=/opt/dataedge/venv/bin/python -u -m uvicorn main:app \
+    --host 0.0.0.0 --port 8001 \
+    --workers 1 \
+    --loop uvloop \
+    --http httptools \
+    --ws websockets \
+    --log-level info \
+    --access-log /var/log/dataedge/access.log \
+    --timeout-keep-alive 300
+
+EnvironmentFile=/opt/dataedge/.env
+
+# Memory — Hostinger VPS (2GB RAM plan).
+# After 3 hard OOM kills the kernel gives up. Soft limit triggers GC before hard limit.
+MemoryMax=1536M
+MemoryHigh=1280M
+
+# Restart policy — stop crash-looping after 10 failures in 5 minutes.
+# Without StartLimitBurst, systemd retries forever = log spam + CPU burn.
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Timeouts — give the app time to start (DB init, role sandbox sync, etc.)
+# but don't let a hung startup consume resources forever.
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Watchdog — if the event loop hangs for 120s, kill and restart
+WatchdogSec=120
+
+# Security — minimal attack surface
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/dataedge/backend/data /var/log/dataedge
+
+# Graceful shutdown — let uvicorn finish in-flight WebSocket frames
+KillSignal=SIGTERM
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

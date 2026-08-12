@@ -7,7 +7,7 @@ let lastCampaignSnapshot = null;
 /** Server-side total lead count from /api/campaign/state (authoritative). */
 let _serverTotalLeads = 0;
 
-const DEFAULT_MANIFEST_FETCH_LIMIT = 2000;
+const DEFAULT_MANIFEST_FETCH_LIMIT = 0;
 
 /** Server-side chart aggregates (full outbound cohort, not the chart row sample). */
 function buildChartExtrasFromState(data) {
@@ -537,7 +537,11 @@ async function syncState() {
 
         await refreshCampaignManifest({ keepStaleVisible: !!(Array.isArray(allLeads) && allLeads.length > 0) });
 
-        loadInboundCallbacks();
+        var now = Date.now();
+        if (now - _lastInboundCallbackLoad > INBOUND_CALLBACK_POLL_INTERVAL) {
+            _lastInboundCallbackLoad = now;
+            loadInboundCallbacks();
+        }
 
         const gapEl = document.getElementById('campaign-inter-call-gap');
         if (gapEl && data.inter_call_gap_sec != null && document.activeElement !== gapEl) {
@@ -687,27 +691,20 @@ function renderCalls() {
 
     rows.sort((a, b) => (b.start_time || 0) - (a.start_time || 0));
 
-    if (!rows.length) {
+    // Limit visible rows to reduce DOM size
+    const MAX_VISIBLE_ROWS = 500;
+    const truncated = rows.length > MAX_VISIBLE_ROWS;
+    const visibleRows = truncated ? rows.slice(0, MAX_VISIBLE_ROWS) : rows;
+
+    if (!visibleRows.length) {
         tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-secondary);">No matching calls</td></tr>`;
         return;
     }
 
-    const newHtml = rows.map(r => renderCallRow(r)).join('');
-    const sig = rows.map(r => r.id + ':' + r.status + ':' + effectiveDispo(r) + ':' + (r.summary || '')).join('|') + '|' + rows.length;
+    const newHtml = visibleRows.map(r => renderCallRow(r)).join('');
+    const sig = visibleRows.length + ':' + rows.length + ':' + (visibleRows[0]?.id || '') + ':' + (visibleRows[visibleRows.length - 1]?.id || '');
     if (tbody.dataset.sig !== sig) {
-        const temp = document.createElement('tbody');
-        temp.innerHTML = newHtml;
-        if (tbody.children.length === temp.children.length) {
-            const oldChildren = Array.from(tbody.children);
-            const newChildren = Array.from(temp.children);
-            for (let i = 0; i < oldChildren.length; i++) {
-                if (oldChildren[i].outerHTML !== newChildren[i].outerHTML) {
-                    oldChildren[i].outerHTML = newChildren[i].outerHTML;
-                }
-            }
-        } else {
-            tbody.innerHTML = newHtml;
-        }
+        tbody.innerHTML = newHtml;
         tbody.dataset.sig = sig;
     }
 
@@ -927,6 +924,8 @@ async function saveInterCallGap() {
 
 // ─── Re-analyze All ───
 let _reanalyzePollTimer = null;
+let _lastInboundCallbackLoad = 0;
+const INBOUND_CALLBACK_POLL_INTERVAL = 60000;
 
 function showReanalyzeModal() {
     const m = document.getElementById('modal-reanalyze-all');
@@ -1030,9 +1029,9 @@ function cancelReanalyzeAll() {
 }
 
 function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
+    const s = String(str == null ? '' : str);
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ─── Manual Call ───
