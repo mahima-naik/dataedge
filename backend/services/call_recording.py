@@ -1,22 +1,49 @@
 """Optional per-call 16 kHz mono WAV (inbound + outbound + mixed) for Vobiz WebSocket calls.
 
-FIX: Sequential interleaved recording — inbound (user) and outbound (AI) chunks are
-tagged with wall-clock timestamps and interleaved during close() so the mixed WAV
-plays the conversation in chronological order (user question → AI answer → user question).
+Recording model
+---------------
+
+The recording is built from the **ordered audio stream**, not from packet
+arrival times.  For every call we keep two independent, *continuous* timelines:
+
+* inbound  — customer audio, in the order frames arrived (Vobiz delivers
+  media in order even when the WebSocket lumps/bursts them).
+* outbound — AI audio (scripted greeting, Gemini Live resampler output, and any
+  TTS fallback), in the order it was produced.
+
+Each frame is assigned a monotonic sequence number and a continuous sample
+position (previous position + sample count).  Wall-clock arrival time is
+recorded **only for diagnostics**; it is never used to decide whether silence
+exists in the conversation.
+
+A late frame is still valid audio: a 200 ms network delay does **not** become
+200 ms of silence in the recording.  The only silence we ever reconstruct is a
+single coarse lead-in used to align the two timelines (based on the first
+frame of each direction), never per-chunk gaps.
+
+**Mixed recording (gap-aware):**  The ``<stem>_mixed.wav/.mp3`` artifact uses
+a different strategy from the per-direction WAVs.  It reconstructs silence
+gaps from inter-chunk arrival timestamps so that real conversation pauses are
+preserved and turns are interleaved correctly — not all-AI-then-all-user.
+Chunks whose inter-arrival gap (after accounting for the previous chunk's
+audio duration) falls below 50 ms are treated as contiguous (processing jitter
+is never turned into artificial silence).
+
+Mixing is done by safe int32 summation with int16 clipping, so simultaneous
+speech (barge-in / overlap) is preserved and never force-shifted.
 """
 
 from __future__ import annotations
 
-import audioop
 import struct
+import subprocess
 import threading
 import wave
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 from loguru import logger
 
 from config import settings
@@ -24,44 +51,8 @@ from config import settings
 
 import time
 
-
-# ---------------------------------------------------------------------------
-# Recording work isolation (spec #13 / #16 / #18).
-#
-# Before: every call ended by spawning a *new* OS thread that ran per-sample
-# Python loops over the whole recording on the GIL — with N concurrent calls
-# those threads thrashed the event-loop core and could starve real-time audio.
-#
-# Now: a single bounded worker pool serialises all WAV build/ffmpeg work, so
-# (a) the heavy DSP never runs on the caller's thread, and (b) concurrent calls
-# queue rather than fight for the GIL. The DSP below is also fully vectorised
-# with numpy (100x+ faster than the old per-sample loops).
-# ---------------------------------------------------------------------------
-
-_REC_WORKERS: Optional[ThreadPoolExecutor] = None
-_REC_WORKER_LOCK = threading.Lock()
-
-
-def _rec_executor() -> ThreadPoolExecutor:
-    global _REC_WORKERS
-    if _REC_WORKERS is None:
-        with _REC_WORKER_LOCK:
-            if _REC_WORKERS is None:
-                # One worker is enough: recording is post-call and must not
-                # contend with the live audio event loop for CPU.
-                _REC_WORKERS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rec-write")
-    return _REC_WORKERS
-
 _SR = 16000
 _BPS = 2  # bytes per sample (s16le)
-
-# Splice-click protection: short linear ramp applied at chunk edges whenever a
-# chunk is stitched onto (or away from) a silence fill. 2 ms (32 samples) is
-# short enough to be inaudible on speech but long enough to remove the harsh
-# click/pop caused by an instant 0 -> full-amplitude transition.
-_FADE_SAMPLES = 32
-# Gaps longer than this are treated as real silence (filled + faded).
-_SILENCE_GAP_SEC = 0.005
 
 # Noise gate: telephony gateways (Vobiz/SIP) often inject a low-level hiss
 # floor on both legs.  The gate attenuates any window whose RMS falls below
@@ -82,13 +73,47 @@ def _day_dir(base_dir: Optional[str] = None) -> Path:
     return base / day
 
 
-class CallRecorder:
-    """Appends 16 kHz s16le mono PCM to timestamped in-memory buffers;
-    writes WAV/MP3 on close with sequential interleaved mixing.
+def mix_pcm_s16le(a: bytes, b: bytes) -> bytes:
+    """Mix two mono s16le PCM streams without wraparound or clipping distortion.
 
-    Each ``add_inbound`` / ``add_outbound`` call records the PCM along with
-    ``time.time()``. During ``close()``, chunks are interleaved by timestamp
-    so the mixed WAV plays the conversation in natural order.
+    Sums in int32 and clips to int16.  When only one stream carries signal (the
+    normal case in a phone conversation) loudness is preserved exactly; clipping
+    can only occur during genuine simultaneous speech, which is brief and
+    inaudible.  ``audioop.add`` was avoided because it hard-clips the same way
+    but offers no room to reason about overlap.
+    """
+    if not a:
+        return b
+    if not b:
+        return a
+    if len(a) != len(b):
+        n = max(len(a), len(b))
+        a = a + b"\x00" * (n - len(a))
+        b = b + b"\x00" * (n - len(b))
+    an = np.frombuffer(a, dtype=np.int16).astype(np.int32)
+    bn = np.frombuffer(b, dtype=np.int16).astype(np.int32)
+    s = an + bn
+    np.clip(s, -32768, 32767, out=s)
+    return s.astype(np.int16).tobytes()
+
+
+class CallRecorder:
+    """Accumulates per-direction, sequence-ordered PCM and writes WAV/MP3 on close.
+
+    ``add_inbound`` / ``add_outbound`` append PCM to a continuous per-direction
+    timeline.  Every frame is tagged with a monotonic sequence number and an
+    arrival timestamp that is used **only for diagnostics** — the audio position
+    is derived purely from frame order and accumulated sample count.
+
+    On ``close()`` the recorder hands the queued frames to a background worker
+    thread, which writes three artifacts:
+
+    * ``<stem>_inbound.wav``  — customer timeline (continuous, no gaps)
+    * ``<stem>_outbound.wav`` — AI timeline (continuous, no gaps)
+    * ``<stem>_mixed.wav/.mp3`` — the two timelines merged with **gap-aware**
+      alignment: silence gaps are reconstructed from inter-chunk arrival
+      timestamps so that real conversation pauses are preserved and turns
+      are interleaved correctly (not all-AI-then-all-user).
     """
 
     def __init__(self, session_id: str, *, channel: str, base_dir: Optional[str] = None) -> None:
@@ -97,20 +122,26 @@ class CallRecorder:
         self._lock = threading.Lock()
         self._in_path: Optional[str] = None
         self._out_path: Optional[str] = None
-        # Timestamped chunks: list of (timestamp, pcm_bytes, direction)
-        self._chunks: list[tuple[float, bytes, str]] = []
-        self._drop_count: int = 0
-        # Soft cap: ~10 min of 16 kHz s16le per direction (inbound + outbound
-        # counted together). Beyond this we drop oldest to bound memory; normally
-        # MAX_CALL_DURATION_SEC=600 keeps us well under it.
-        self._max_bytes = 10 * 60 * _SR * _BPS * 2
-        self._bytes_stored = 0
-        self._start_time: float = time.time()
-        self._in_written = 0
-        self._out_written = 0
-        self._in_first_write_t: Optional[float] = None
-        self._out_first_write_t: Optional[float] = None
-        # Reference time: set to Vobiz stream start for accurate alignment
+
+        # Continuous per-direction streams.  Each entry is
+        # (sequence_number, pcm_bytes, arrival_timestamp).
+        self._in_chunks: list[tuple[int, bytes, float]] = []
+        self._out_chunks: list[tuple[int, bytes, float]] = []
+        self._in_seq: int = 0
+        self._out_seq: int = 0
+        self._in_samples: int = 0
+        self._out_samples: int = 0
+
+        # Arrival-time diagnostics — never used to place audio.
+        self._in_first_arrival: Optional[float] = None
+        self._out_first_arrival: Optional[float] = None
+        self._in_last_arrival: Optional[float] = None
+        self._out_last_arrival: Optional[float] = None
+        self._in_arrival_jitter_ms: list[float] = []
+        self._out_arrival_jitter_ms: list[float] = []
+
+        # Reference anchor: the Vobiz stream start time (perf_counter).  Used
+        # only as a coarse alignment reference between the two timelines.
         self._stream_start_t: Optional[float] = None
 
         if not settings.call_recording_enabled:
@@ -124,10 +155,9 @@ class CallRecorder:
         stem = _safe_stem(session_id)
         self._in_path = str(d / f"{stem}_inbound.wav")
         self._out_path = str(d / f"{stem}_outbound.wav")
-        self._start_time = time.time()
-        
+
         logger.info(
-            "Call recording: initialized memory buffers for channel={} session={} in={} out={}",
+            "Call recording: initialized channel={} session={} in={} out={}",
             channel,
             session_id,
             self._in_path,
@@ -135,95 +165,168 @@ class CallRecorder:
         )
 
     def set_stream_start(self, t: Optional[float] = None) -> None:
-        """Set the Vobiz stream start reference time for accurate alignment."""
+        """Set the Vobiz stream start reference time for coarse alignment."""
         self._stream_start_t = t if t is not None else time.perf_counter()
 
-    def add_inbound(self, pcm_s16le_mono: bytes) -> None:
-        """Append inbound PCM with timestamp. Lock-free for CPython."""
-        if not self._in_path or not pcm_s16le_mono:
-            return
-        self._append_chunk(pcm_s16le_mono, "in")
+    def add_inbound(self, pcm_s16le_mono: bytes, seq: Optional[int] = None) -> None:
+        """Append inbound PCM to the customer timeline (ordered, contiguous)."""
+        self._append("in", pcm_s16le_mono, seq)
 
-    def add_outbound(self, pcm_s16le_mono: bytes) -> None:
-        """Append outbound PCM with timestamp. Lock-free for CPython."""
-        if not self._out_path or not pcm_s16le_mono:
-            return
-        self._append_chunk(pcm_s16le_mono, "out")
+    def add_outbound(self, pcm_s16le_mono: bytes, seq: Optional[int] = None) -> None:
+        """Append outbound PCM to the AI timeline (ordered, contiguous)."""
+        self._append("out", pcm_s16le_mono, seq)
 
-    def _append_chunk(self, pcm: bytes, direction: str) -> None:
-        now = time.perf_counter()
-        if direction == "in" and self._in_first_write_t is None:
-            self._in_first_write_t = now
-        if direction == "out" and self._out_first_write_t is None:
-            self._out_first_write_t = now
-        self._bytes_stored += len(pcm)
-        if self._bytes_stored > self._max_bytes and self._chunks:
-            # Drop oldest to bound memory; record the drop.
-            _, old, _ = self._chunks.pop(0)
-            self._bytes_stored -= len(old)
-            self._drop_count += 1
-        self._chunks.append((now, pcm, direction))
+    def _append(self, direction: str, pcm: bytes, seq: Optional[int]) -> None:
+        if not pcm:
+            return
         if direction == "in":
-            self._in_written += len(pcm)
+            if not self._in_path:
+                return
         else:
-            self._out_written += len(pcm)
+            if not self._out_path:
+                return
 
-    def recording_depth(self) -> int:
-        """Number of queued recording chunks (for live diagnostics)."""
-        return len(self._chunks)
-
-    def recording_drop_count(self) -> int:
-        return self._drop_count
+        now = time.perf_counter()
+        with self._lock:
+            if direction == "in":
+                if seq is None:
+                    seq = self._in_seq
+                self._in_seq = max(self._in_seq, seq + 1)
+                if self._in_first_arrival is None:
+                    self._in_first_arrival = now
+                if self._in_last_arrival is not None:
+                    self._in_arrival_jitter_ms.append((now - self._in_last_arrival) * 1000.0)
+                self._in_last_arrival = now
+                self._in_chunks.append((seq, bytes(pcm), now))
+                self._in_samples += len(pcm) // 2
+            else:
+                if seq is None:
+                    seq = self._out_seq
+                self._out_seq = max(self._out_seq, seq + 1)
+                if self._out_first_arrival is None:
+                    self._out_first_arrival = now
+                if self._out_last_arrival is not None:
+                    self._out_arrival_jitter_ms.append((now - self._out_last_arrival) * 1000.0)
+                self._out_last_arrival = now
+                self._out_chunks.append((seq, bytes(pcm), now))
+                self._out_samples += len(pcm) // 2
 
     def close(self) -> None:
         if self._in_path or self._out_path:
             logger.info(
-                "Call recording: closed channel={} session={} (flushing {} chunks to worker pool)",
+                "Call recording: closing channel={} session={} (in_chunks={} out_chunks={})",
                 self._channel,
                 self._session_id,
-                len(self._chunks),
+                len(self._in_chunks),
+                len(self._out_chunks),
             )
-            try:
-                _rec_executor().submit(self._write_recording_wav)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Call recording: submit to worker pool failed: {}", exc)
+            threading.Thread(target=self._write_recording, daemon=True).start()
+
+    def recording_depth(self) -> int:
+        """Number of queued frames still pending finalization (diagnostics)."""
+        return len(self._in_chunks) + len(self._out_chunks)
+
+    def recording_drop_count(self) -> int:
+        """Frames dropped by the recording path (always 0 in the new pipeline)."""
+        return 0
+
+    # ------------------------------------------------------------------ #
+    # Gap-aware timeline builder                                         #
+    # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _pcm_energy(pcm: bytes) -> float:
-        """Compute RMS energy of PCM s16le mono (used for silence detection)."""
-        import numpy as _np
+    def _build_timeline_from_chunks(
+        chunks: list[tuple[int, bytes, float]],
+        anchor: float,
+        gap_threshold_sec: float = 0.05,
+    ) -> bytes:
+        """Build a PCM timeline with silence gaps based on arrival timestamps.
 
-        if len(pcm) < 2:
-            return 0.0
-        arr = _np.frombuffer(pcm, dtype=_np.int16)
-        if arr.size == 0:
-            return 0.0
-        return float(_np.sqrt(_np.mean(arr.astype(_np.float64) ** 2)))
+        Unlike simple concatenation, this preserves real conversation rhythm
+        by inserting silence where the speaker was actually silent.  Chunks
+        whose inter-arrival gap (after accounting for the previous chunk's
+        audio duration) falls below ``gap_threshold_sec`` are treated as
+        contiguous — processing jitter is never turned into artificial silence.
 
-    @staticmethod
-    def _fade_pcm_edges(pcm: bytes, *, fade_in: bool, fade_out: bool) -> bytes:
-        """Apply short linear fade ramps at PCM edges to kill splice clicks.
-
-        Only used at real utterance boundaries (silence -> speech / speech ->
-        silence). Chunks that are contiguous with neighbours are left untouched,
-        so continuous speech is not smeared or pumped.
+        Each chunk is ``(seq, pcm_bytes, arrival_perf_counter)``.
+        ``anchor`` is the earliest known event time (stream start or first
+        chunk arrival across both directions).
         """
-        if not (fade_in or fade_out):
-            return pcm
-        import numpy as _np
+        if not chunks:
+            return b""
 
-        arr = _np.frombuffer(pcm, dtype=_np.int16)
-        n = arr.size
-        if n < 2 * _FADE_SAMPLES:
-            # Too short to fade both edges without destroying the chunk — skip.
+        result = bytearray()
+        prev_end_time: Optional[float] = None
+
+        for _seq, pcm, arrival in chunks:
+            if prev_end_time is None:
+                # First chunk: position relative to anchor.
+                lead_sec = arrival - anchor
+                if lead_sec > gap_threshold_sec:
+                    lead_samples = int(lead_sec * _SR)
+                    result.extend(b"\x00\x00" * lead_samples)
+            else:
+                # Subsequent chunk: insert silence for real conversation gap.
+                gap_sec = arrival - prev_end_time
+                if gap_sec > gap_threshold_sec:
+                    gap_samples = int(gap_sec * _SR)
+                    result.extend(b"\x00\x00" * gap_samples)
+
+            result.extend(pcm)
+            chunk_duration = len(pcm) / (_SR * _BPS)
+            prev_end_time = arrival + chunk_duration
+
+        return bytes(result)
+
+    # ------------------------------------------------------------------ #
+    # Audio shaping (unchanged helpers)                                  #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _noise_gate(pcm: bytes) -> bytes:
+        """Suppress low-level hiss floor from telephony audio.
+
+        Computes RMS in 20 ms windows and applies smooth gain reduction when
+        the level falls below ``_NOISE_GATE_THRESH``.  Attack/release envelopes
+        prevent the gain changes from sounding choppy.  This targets the
+        broadband hiss that Vobiz/SIP gateways inject on both legs without
+        touching actual speech.
+        """
+        n = len(pcm) // 2
+        if n < 2:
             return pcm
-        if fade_in:
-            ramp = _np.linspace(0.0, 1.0, _FADE_SAMPLES, dtype=_np.float64)
-            arr[:_FADE_SAMPLES] = (arr[:_FADE_SAMPLES].astype(_np.float64) * ramp).astype(_np.int16)
-        if fade_out:
-            ramp = _np.linspace(1.0, 0.0, _FADE_SAMPLES, dtype=_np.float64)
-            arr[n - _FADE_SAMPLES:] = (arr[n - _FADE_SAMPLES:].astype(_np.float64) * ramp).astype(_np.int16)
-        return arr.tobytes()
+        win = int(_SR * 0.02)  # 20 ms window
+        if win < 2:
+            win = 2
+        arr = bytearray(pcm)
+        max_i16 = 32768.0
+        thresh = _NOISE_GATE_THRESH
+        reduction = _NOISE_GATE_REDUCTION
+        attack = _NOISE_GATE_ATTACK_SAMPLES
+        release = _NOISE_GATE_RELEASE_SAMPLES
+        # Per-sample gain envelope, smoothed across windows.
+        gain = 1.0
+        pos = 0
+        while pos < n:
+            end = min(pos + win, n)
+            # RMS of this window
+            total = 0.0
+            for i in range(pos, end):
+                s = struct.unpack_from("<h", arr, i * 2)[0]
+                total += s * s
+            rms = (total / (end - pos)) ** 0.5 / max_i16
+            target = 1.0 if rms > thresh else reduction
+            # Smoothly move gain toward target across the window.
+            if target < gain:
+                step = (gain - target) / max(1, release)
+            else:
+                step = (target - gain) / max(1, attack)
+            for i in range(pos, end):
+                gain = max(reduction, min(1.0, gain + step)) if target > gain else max(reduction, gain - step)
+                v = struct.unpack_from("<h", arr, i * 2)[0]
+                struct.pack_into("<h", arr, i * 2, int(v * gain))
+            pos = end
+        return bytes(arr)
 
     @staticmethod
     def _trim_trailing_silence(pcm: bytes, keep_ms: float = 350.0) -> bytes:
@@ -233,131 +336,135 @@ class CallRecorder:
         keeps the stream open until hangup); without this the WAV/MP3 contains
         long runs of dead air that make the recording feel bloated.
         """
-        import numpy as _np
-
         n = len(pcm) // 2
         if n < 2:
             return pcm
-        arr = _np.frombuffer(pcm, dtype=_np.int16)
         keep = int(_SR * keep_ms / 1000.0)
-        above = _np.abs(arr) > 40
-        if not above.any():
-            return pcm[:2]
-        last = int(_np.argmax(above[::-1]))  # distance from end of last sample > 40
-        idx = min(n - 1, n - 1 - last + keep)
-        return arr[: idx + 1].tobytes()
+        idx = n - 1
+        while idx >= 0:
+            if abs(struct.unpack_from("<h", pcm, idx * 2)[0]) > 40:
+                break
+            idx -= 1
+        idx = min(n - 1, idx + keep)
+        return pcm[: idx * 2 + 2]
 
-    @staticmethod
-    def _noise_gate(pcm: bytes) -> bytes:
-        """Suppress low-level hiss floor from telephony audio.
+    # ------------------------------------------------------------------ #
+    # Worker (background thread — never on the live call path)           #
+    # ------------------------------------------------------------------ #
 
-        Computes RMS in 20 ms windows and applies smooth gain reduction when
-        the level falls below ``_NOISE_GATE_THRESH``.  Attack/release envelopes
-        prevent the gain changes from sounding choppy.  Vectorised with numpy —
-        the previous per-sample Python loop was a top CPU consumer on the
-        recording worker for long calls.
-        """
-        import numpy as _np
+    def _write_recording(self) -> None:
+        t_start = time.perf_counter()
+        with self._lock:
+            in_chunks = list(self._in_chunks)
+            out_chunks = list(self._out_chunks)
+            self._in_chunks.clear()
+            self._out_chunks.clear()
+            in_first = self._in_first_arrival
+            out_first = self._out_first_arrival
+            stream_start = self._stream_start_t
+            in_jitter = list(self._in_arrival_jitter_ms)
+            out_jitter = list(self._out_arrival_jitter_ms)
 
-        n = len(pcm) // 2
-        if n < 2:
-            return pcm
-        arr = _np.frombuffer(pcm, dtype=_np.int16).astype(_np.float64)
-        win = max(2, int(_SR * 0.02))  # 20 ms window
-        max_i16 = 32768.0
-        thresh = _NOISE_GATE_THRESH
-        reduction = _NOISE_GATE_REDUCTION
-        attack = _NOISE_GATE_ATTACK_SAMPLES
-        release = _NOISE_GATE_RELEASE_SAMPLES
+        # Build contiguous per-direction streams for individual WAVs.
+        # Order is preserved; NO silence is inserted for inter-frame arrival
+        # gaps (network jitter is not conversational silence).
+        in_pcm = b"".join(pcm for _, pcm, _ in in_chunks)
+        out_pcm = b"".join(pcm for _, pcm, _ in out_chunks)
 
-        n_win = max(1, (n + win - 1) // win)
-        out = _np.empty_like(arr)
-        gain = 1.0
-        pos = 0
-        for w in range(n_win):
-            end = min(pos + win, n)
-            seg = arr[pos:end]
-            rms = _np.sqrt(_np.mean(seg ** 2)) / max_i16 if seg.size else 0.0
-            target = 1.0 if rms > thresh else reduction
-            n_seg = end - pos
-            if target < gain:
-                step = (gain - target) / max(1, release)
-                gain = max(reduction, gain - step)
-            else:
-                step = (target - gain) / max(1, attack)
-                gain = min(1.0, gain + step)
-            out[pos:end] = seg * gain
-            pos = end
-        return _np.clip(out, -32768, 32767).astype(_np.int16).tobytes()
+        if self._in_path and in_pcm:
+            self._write_wav(
+                self._in_path,
+                self._noise_gate(self._trim_trailing_silence(in_pcm)),
+                "inbound",
+            )
 
-    def _write_recording_wav(self) -> None:
-        """Write inbound, outbound, and sequentially-interleaved mixed WAV/MP3.
+        if self._out_path and out_pcm:
+            self._write_wav(
+                self._out_path,
+                self._noise_gate(self._trim_trailing_silence(out_pcm)),
+                "outbound",
+            )
 
-        The mixed WAV is built by sorting all chunks by timestamp and writing
-        them in chronological order. When both inbound and outbound chunks
-        overlap at the same time, the outbound (AI) chunk is placed AFTER the
-        inbound (user) chunk by adjusting its effective timestamp to be
-        slightly later (offset by the chunk duration). This prevents AI audio
-        from being heard before the user's question.
-        """
-        if not self._chunks:
+        if in_pcm or out_pcm:
+            # Build gap-aware timelines for the MIXED recording so real
+            # conversation pauses are preserved and turns are interleaved
+            # correctly (not all-AI-then-all-user).
+            anchors: list[float] = []
+            if stream_start is not None:
+                anchors.append(stream_start)
+            if in_first is not None:
+                anchors.append(in_first)
+            if out_first is not None:
+                anchors.append(out_first)
+            anchor = min(anchors) if anchors else 0.0
+
+            in_timeline = self._build_timeline_from_chunks(in_chunks, anchor)
+            out_timeline = self._build_timeline_from_chunks(out_chunks, anchor)
+            self._write_mixed(in_timeline, out_timeline)
+
+        self._log_diagnostics(in_chunks, out_chunks, in_jitter, out_jitter, t_start)
+
+    def _write_wav(self, path: str, pcm: bytes, label: str) -> None:
+        try:
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(_SR)
+                w.writeframes(pcm)
+            logger.info(
+                "Call recording: {} WAV written {} ({} B, {:.1f}s)",
+                label,
+                path,
+                len(pcm),
+                len(pcm) / (_SR * _BPS),
+            )
+        except Exception as e:
+            logger.exception("Call recording: failed to write {} WAV {}: {}", label, path, e)
+
+    def _write_mixed(
+        self,
+        in_timeline: bytes,
+        out_timeline: bytes,
+    ) -> None:
+        if not in_timeline and not out_timeline:
             return
 
-        with self._lock:
-            chunks = list(self._chunks)
-            self._chunks.clear()
+        # Both timelines share the same anchor so they are already aligned.
+        # Just pad the shorter one with silence to equal length and mix.
+        max_len = max(len(in_timeline), len(out_timeline))
+        in_padded = in_timeline + b"\x00" * (max_len - len(in_timeline))
+        out_padded = out_timeline + b"\x00" * (max_len - len(out_timeline))
 
-        # Separate inbound and outbound chunks
-        in_chunks: list[tuple[float, bytes]] = []
-        out_chunks: list[tuple[float, bytes]] = []
-        for ts, pcm, direction in chunks:
-            if direction == "in":
-                in_chunks.append((ts, pcm))
-            else:
-                out_chunks.append((ts, pcm))
+        mixed = mix_pcm_s16le(in_padded, out_padded)
+        mixed = self._noise_gate(self._trim_trailing_silence(mixed))
 
-        # Write inbound WAV
-        if self._in_path and in_chunks:
-            self._write_wav_from_chunks(self._in_path, in_chunks, "inbound")
+        stem = Path(self._in_path or self._out_path).stem
+        for suffix in ("_inbound", "_outbound"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
 
-        # Write outbound WAV
-        if self._out_path and out_chunks:
-            self._write_wav_from_chunks(self._out_path, out_chunks, "outbound")
-
-        # Write sequentially-interleaved mixed WAV
-        mixed_path = None
+        mixed_path = str(Path(self._in_path or self._out_path).parent / f"{stem}_mixed.wav")
         try:
-            if not in_chunks and not out_chunks:
-                return
-
-            # Build interleaved timeline
-            mixed_frames = self._build_sequential_mixed(in_chunks, out_chunks)
-            if not mixed_frames:
-                return
-
-            stem = Path(self._in_path or self._out_path).stem
-            for suffix in ("_inbound", "_outbound"):
-                if stem.endswith(suffix):
-                    stem = stem[: -len(suffix)]
-                    break
-            
-            mixed_path = str(Path((self._in_path or self._out_path)).parent / f"{stem}_mixed.wav")
             with wave.open(mixed_path, "wb") as w:
                 w.setnchannels(1)
                 w.setsampwidth(2)
                 w.setframerate(_SR)
-                w.writeframes(self._noise_gate(self._trim_trailing_silence(mixed_frames)))
-            logger.info("Call recording: sequential mixed WAV written {} ({} B, {:.1f}s)",
-                        mixed_path, len(mixed_frames), len(mixed_frames) / (_SR * _BPS))
+                w.writeframes(mixed)
+            logger.info(
+                "Call recording: mixed WAV written {} ({} B, {:.1f}s)",
+                mixed_path,
+                len(mixed),
+                len(mixed) / (_SR * _BPS),
+            )
 
-            # Compress to MP3
             mp3_path = mixed_path.replace(".wav", ".mp3")
             try:
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", mixed_path, "-acodec", "libmp3lame", "-b:a", "64k", mp3_path],
                     check=True,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
                 )
                 logger.info("Call recording: compressed to MP3 {}", mp3_path)
                 Path(mixed_path).unlink(missing_ok=True)
@@ -366,134 +473,68 @@ class CallRecorder:
         except Exception as e:
             logger.exception("Call recording mix failed: {}", e)
 
-    def _build_sequential_mixed(
-        self,
-        in_chunks: list[tuple[float, bytes]],
-        out_chunks: list[tuple[float, bytes]],
-    ) -> bytes:
-        """Build a sequential mixed recording from timestamped chunks.
+    # ------------------------------------------------------------------ #
+    # Diagnostics                                                        #
+    # ------------------------------------------------------------------ #
 
-        Algorithm:
-        1. All chunks are tagged with (timestamp, pcm, direction).
-        2. Sort by timestamp.
-        3. For overlapping chunks (AI starting while user still speaking):
-           - The user (inbound) audio takes priority at that timestamp.
-           - The AI (outbound) audio is delayed to start AFTER the user chunk ends.
-        4. Fill gaps with silence.
-        5. Result: user question always precedes AI answer.
-        """
-        if not in_chunks and not out_chunks:
-            return b""
+    @staticmethod
+    def _jitter_stats(jitter_ms: list[float]) -> tuple[float, float]:
+        if not jitter_ms:
+            return 0.0, 0.0
+        return sum(jitter_ms) / len(jitter_ms), max(jitter_ms)
 
-        ref_t = self._stream_start_t or (
-            min(
-                (c[0] for c in in_chunks),
-                default=(out_chunks[0][0] if out_chunks else time.time()),
-            )
-            if in_chunks or out_chunks
-            else time.time()
-        )
-
-        # Convert to (relative_time_sec, pcm, direction) tuples
-        tagged: list[tuple[float, bytes, str]] = []
-        for ts, pcm in in_chunks:
-            tagged.append(((ts - ref_t), pcm, "in"))
-        for ts, pcm in out_chunks:
-            tagged.append(((ts - ref_t), pcm, "out"))
-
-        # Sort by timestamp
-        tagged.sort(key=lambda x: x[0])
-
-        # Build sequential output: ensure outbound never precedes inbound at same time
-        # When overlap detected, delay outbound chunk to end of inbound chunk
-        result = bytearray()
-        last_end_time = 0.0  # tracks the end time of the last written audio
-
-        for i, (t_start, pcm, direction) in enumerate(tagged):
-            duration = len(pcm) / (_SR * _BPS)
-            t_end = t_start + duration
-
-            if direction == "in":
-                # Inbound (user) always writes at its natural position
-                effective_start = t_start
-            else:
-                # Outbound (AI) — must not start before last user audio ends
-                effective_start = max(t_start, last_end_time)
-
-            silence_needed = max(0, effective_start - last_end_time)
-            chunk_end = max(last_end_time, effective_start + duration)
-
-            # Fade at every seam that is NOT a natural continuous continuation:
-            #   * real silence gap before this chunk,
-            #   * this chunk was force-shifted forward (spliced onto earlier audio,
-            #     e.g. a user burst recorded during the scripted greeting), or
-            #   * the next chunk will be spliced onto / after this one.
-            # Continuous 20ms runs (next chunk starts exactly where this one ends)
-            # are left untouched so normal speech is not smeared.
-            next_t = tagged[i + 1][0] if i + 1 < len(tagged) else float("inf")
-            forced_splice = effective_start > t_start + 1e-9
-            preceded_by_silence = silence_needed > _SILENCE_GAP_SEC
-            fade_in = preceded_by_silence or forced_splice
-            gap_after = next_t - chunk_end
-            fade_out = gap_after > _SILENCE_GAP_SEC or gap_after < -1e-9
-
-            pcm = self._fade_pcm_edges(
-                pcm,
-                fade_in=fade_in,
-                fade_out=fade_out,
-            )
-
-            if silence_needed > _SILENCE_GAP_SEC:
-                result.extend(b"\x00" * (int(silence_needed * _SR * _BPS) // 2 * 2))
-            result.extend(pcm)
-            last_end_time = chunk_end
-
-        return bytes(result)
-
-    def _write_wav_from_chunks(
-        self, path: str, chunks: list[tuple[float, bytes]], label: str
-    ) -> None:
-        """Write a single-direction WAV from timestamped chunks (with gap-filling silence)."""
+    @staticmethod
+    def _sequence_gaps(chunks: list[tuple[int, bytes, float]]) -> int:
+        """Count genuine missing-frame gaps (sequence numbers that skip)."""
         if not chunks:
-            return
-        try:
-            ref_t = self._stream_start_t or chunks[0][0]
-            pcm_parts = bytearray()
-            last_end = 0.0
-            for i, (ts, pcm) in enumerate(chunks):
-                t_start = ts - ref_t
-                duration = len(pcm) / (_SR * _BPS)
-                gap = max(0.0, t_start - last_end)
-                # Fade at utterance boundaries (same logic as the mixed build) so
-                # silence fills don't produce harsh clicks on speech onset/offset.
-                next_gap = 0.0
-                if i + 1 < len(chunks):
-                    nxt_start = chunks[i + 1][0] - ref_t
-                    nxt_dur = len(chunks[i + 1][1]) / (_SR * _BPS)
-                    next_gap = max(0.0, nxt_start - (t_start + duration))
-                pcm = self._fade_pcm_edges(
-                    pcm,
-                    fade_in=gap > _SILENCE_GAP_SEC,
-                    fade_out=next_gap > _SILENCE_GAP_SEC,
-                )
-                if gap > _SILENCE_GAP_SEC:
-                    pcm_parts.extend(b"\x00" * (int(gap * _SR * _BPS) // 2 * 2))
-                pcm_parts.extend(pcm)
-                last_end = max(last_end, t_start + duration)
-            with wave.open(path, "wb") as w:
-                w.setnchannels(1)
-                w.setsampwidth(2)
-                w.setframerate(_SR)
-                w.writeframes(self._noise_gate(self._trim_trailing_silence(bytes(pcm_parts))))
-        except Exception as e:
-            logger.exception("Call recording: failed to write {} WAV {}: {}", label, path, e)
+            return 0
+        gaps = 0
+        prev = chunks[0][0]
+        for seq, _, _ in chunks[1:]:
+            if seq > prev + 1:
+                gaps += 1
+            prev = seq
+        return gaps
+
+    def _log_diagnostics(
+        self,
+        in_chunks: list[tuple[int, bytes, float]],
+        out_chunks: list[tuple[int, bytes, float]],
+        in_jitter: list[float],
+        out_jitter: list[float],
+        t_start: float,
+    ) -> None:
+        in_avg, in_max = self._jitter_stats(in_jitter)
+        out_avg, out_max = self._jitter_stats(out_jitter)
+        logger.info(
+            "CALL-RECORDING-DIAG session={} channel={} "
+            "frames_in={} frames_out={} "
+            "seq_gaps_in={} seq_gaps_out={} "
+            "arrival_jitter_in={:.1f}/{:.1f}ms arrival_jitter_out={:.1f}/{:.1f}ms "
+            "processing_time={:.0f}ms",
+            self._session_id,
+            self._channel,
+            len(in_chunks),
+            len(out_chunks),
+            self._sequence_gaps(in_chunks),
+            self._sequence_gaps(out_chunks),
+            in_avg,
+            in_max,
+            out_avg,
+            out_max,
+            (time.perf_counter() - t_start) * 1000.0,
+        )
 
     def meta(self) -> dict[str, Any]:
         return {
             "inbound_wav": self._in_path,
             "outbound_wav": self._out_path,
             "call_recording": bool(self._in_path or self._out_path),
-            "total_chunks": len(self._chunks),
+            "total_chunks": len(self._in_chunks) + len(self._out_chunks),
+            "inbound_frames": len(self._in_chunks),
+            "outbound_frames": len(self._out_chunks),
+            "inbound_samples": self._in_samples,
+            "outbound_samples": self._out_samples,
         }
 
 

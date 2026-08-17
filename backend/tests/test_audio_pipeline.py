@@ -149,5 +149,113 @@ class TestCallMetrics(unittest.TestCase):
         self.assertEqual(snap["session_id"], "s")
 
 
+class TestCallRecorderTimelineBuilder(unittest.TestCase):
+    """Tests for CallRecorder._build_timeline_from_chunks (gap-aware mixing)."""
+
+    def test_empty_chunks_returns_empty(self):
+        from services.call_recording import CallRecorder
+        result = CallRecorder._build_timeline_from_chunks([], anchor=0.0)
+        self.assertEqual(result, b"")
+
+    def test_single_chunk_no_gap(self):
+        from services.call_recording import CallRecorder
+        # 1 chunk of 320 samples (640 bytes) at anchor time
+        pcm = b"\x01\x00" * 320
+        chunks = [(0, pcm, 100.0)]
+        result = CallRecorder._build_timeline_from_chunks(chunks, anchor=100.0)
+        # No lead-in, just the chunk
+        self.assertEqual(result, pcm)
+
+    def test_single_chunk_with_lead_in(self):
+        from services.call_recording import CallRecorder
+        pcm = b"\x01\x00" * 320
+        chunks = [(0, pcm, 100.5)]  # arrives 0.5s after anchor
+        result = CallRecorder._build_timeline_from_chunks(chunks, anchor=100.0)
+        # Should have 0.5s of silence (8000 samples) then the chunk
+        expected_lead_bytes = int(0.5 * 16000) * 2  # 16000 bytes
+        self.assertEqual(len(result), expected_lead_bytes + len(pcm))
+        # First 16000 bytes should be silence
+        self.assertEqual(result[:expected_lead_bytes], b"\x00\x00" * (expected_lead_bytes // 2))
+        # Then the chunk data
+        self.assertEqual(result[expected_lead_bytes:], pcm)
+
+    def test_two_chunks_with_real_gap(self):
+        from services.call_recording import CallRecorder
+        # Chunk 1: 1s of audio at T=100
+        chunk1 = b"\x01\x00" * 16000
+        # Chunk 2: 1s of audio at T=102 (1s gap after chunk1 ends)
+        chunk2 = b"\x02\x00" * 16000
+        chunks = [(0, chunk1, 100.0), (1, chunk2, 102.0)]
+        result = CallRecorder._build_timeline_from_chunks(chunks, anchor=100.0)
+        # chunk1 duration = 16000 samples / 16000 sr = 1s
+        # gap = 102.0 - (100.0 + 1.0) = 1.0s
+        # Total: 1s chunk1 + 1s gap + 1s chunk2 = 3s = 96000 bytes
+        expected_len = 3 * 16000 * 2
+        self.assertEqual(len(result), expected_len)
+        # Verify chunk1 is at the start
+        self.assertEqual(result[:len(chunk1)], chunk1)
+        # Verify gap is silence
+        gap_start = len(chunk1)
+        gap_end = gap_start + 16000 * 2  # 1s of silence
+        self.assertEqual(result[gap_start:gap_end], b"\x00\x00" * 16000)
+        # Verify chunk2 is after the gap
+        self.assertEqual(result[gap_end:], chunk2)
+
+    def test_two_chunks_no_gap_when_close(self):
+        from services.call_recording import CallRecorder
+        # Chunk 1: 640 bytes (20ms) at T=100
+        chunk1 = b"\x01\x00" * 320
+        # Chunk 2: 640 bytes (20ms) at T=100.02 (20ms later, within threshold)
+        chunk2 = b"\x02\x00" * 320
+        chunks = [(0, chunk1, 100.0), (1, chunk2, 100.02)]
+        result = CallRecorder._build_timeline_from_chunks(chunks, anchor=100.0)
+        # Gap = 100.02 - (100.0 + 0.02) = 0.0s -> no gap inserted
+        self.assertEqual(result, chunk1 + chunk2)
+
+    def test_conversation_interleaving(self):
+        from services.call_recording import CallRecorder
+        """Simulate a real conversation and verify mixed output interleaves."""
+        # T=0: anchor (stream start)
+        # T=0.5s: AI greeting (2s of audio)
+        greeting = b"\x01\x00" * 32000  # 2s
+        # T=3s: user speaks (1s)
+        user1 = b"\x02\x00" * 16000  # 1s
+        # T=5s: AI responds (2s)
+        ai_resp = b"\x03\x00" * 32000  # 2s
+        # T=8s: user speaks again (1s)
+        user2 = b"\x04\x00" * 16000  # 1s
+
+        out_chunks = [(0, greeting, 0.5), (1, ai_resp, 5.0)]
+        in_chunks = [(0, user1, 3.0), (1, user2, 8.0)]
+
+        anchor = 0.0
+        out_timeline = CallRecorder._build_timeline_from_chunks(out_chunks, anchor)
+        in_timeline = CallRecorder._build_timeline_from_chunks(in_chunks, anchor)
+
+        # Out timeline should be:
+        # 0-0.5s: silence (lead-in)
+        # 0.5-2.5s: greeting
+        # 2.5-5.0s: silence (gap)
+        # 5.0-7.0s: ai_resp
+        expected_out_len = int(7.0 * 16000) * 2
+        self.assertEqual(len(out_timeline), expected_out_len)
+
+        # In timeline should be:
+        # 0-3.0s: silence (lead-in)
+        # 3.0-4.0s: user1
+        # 4.0-8.0s: silence (gap)
+        # 8.0-9.0s: user2
+        expected_in_len = int(9.0 * 16000) * 2
+        self.assertEqual(len(in_timeline), expected_in_len)
+
+        # Verify user1 is NOT at the start (not all-user-first)
+        user1_offset = int(3.0 * 16000) * 2
+        self.assertEqual(in_timeline[user1_offset:user1_offset + len(user1)], user1)
+
+        # Verify greeting IS at the start (not all-AI-first after user)
+        greeting_offset = int(0.5 * 16000) * 2
+        self.assertEqual(out_timeline[greeting_offset:greeting_offset + len(greeting)], greeting)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
